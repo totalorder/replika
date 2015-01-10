@@ -78,7 +78,7 @@ class EventType(object):
 
 
 class Peer(threading.Thread):
-    def __init__(self, id, ring, sock, address, recevied_messages, logger):
+    def __init__(self, id, ring, sock, address, received_messages, logger):
         super(Peer, self).__init__()
         self.logger = HierarchyLogger(lambda: u"Peer %s" % self.id, logger)
         self.id = id
@@ -86,7 +86,7 @@ class Peer(threading.Thread):
         self.sock = sock
         self.address = address
         self.running = False
-        self.recevied_messages = recevied_messages
+        self.received_messages = received_messages
         self.unsent_messages = Queue.Queue()
 
     def stop(self):
@@ -105,8 +105,7 @@ class Peer(threading.Thread):
         while self.running:
             msg = self.recvmessage(self.sock)
             evt = EventType.deserialize(msg)
-            # logging.info(u"%s: Received event: %s", self.id, evt)
-            self.recevied_messages.put((self.id, evt))
+            self.received_messages.put((self.id, evt))
 
     def send(self, evt):
         self.unsent_messages.put(evt)
@@ -122,12 +121,12 @@ class Peer(threading.Thread):
             time.sleep(1)
 
     @classmethod
-    def create_from_accepted_socket(cls, sock, address, id, ring, recevied_messages, logger):
+    def create_from_accepted_socket(cls, sock, address, id, ring, received_messages, logger):
         remote_id = cls.recvmessage(sock)
         remote_ring = cls.recvmessage(sock)
         cls.sendmessage(sock, id)
         cls.sendmessage(sock, ring)
-        return cls(remote_id, remote_ring, sock, address, recevied_messages, logger)
+        return cls(remote_id, remote_ring, sock, address, received_messages, logger)
 
     @classmethod
     def create_by_connecting(cls, address, id, ring, recevied_messages, logger):
@@ -141,14 +140,12 @@ class Peer(threading.Thread):
 
     @classmethod
     def sendmessage(cls, sock, msg):
-        # logging.info(u"Send: %s", msg)
         cls.sendbytes(sock, struct.pack("!I", len(msg)) + msg)
 
     @classmethod
     def recvmessage(cls, sock):
         num = struct.unpack("!I", cls.recvbytes(sock, 4))[0]
         msg = cls.recvbytes(sock, num)
-        # logging.info(u"Recv: %s", msg)
         return msg
 
     @staticmethod
@@ -165,13 +162,13 @@ class Peer(threading.Thread):
 
     @staticmethod
     def sendbytes(sock, msg):
-        totalsent = 0
-        msglen = len(msg)
-        while totalsent < msglen:
-            sent = sock.send(msg[totalsent:])
+        total_sent = 0
+        msg_len = len(msg)
+        while total_sent < msg_len:
+            sent = sock.send(msg[total_sent:])
             if sent == 0:
                 raise RuntimeError("socket connection broken")
-            totalsent = totalsent + sent
+            total_sent = total_sent + sent
 
 
 class ClientListener(threading.Thread):

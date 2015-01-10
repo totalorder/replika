@@ -25,10 +25,10 @@ class Client(threading.Thread):
         self.logger = HierarchyLogger(lambda: u"Client %s" % self.id)
         self.listener = ClientListener(5000 + int(self.id), self.connection_accepted, self.logger)
         self.connections_pending = []
-        self.recevied_messages = Queue.Queue()
+        self.received_messages = Queue.Queue()
 
     def connection_accepted(self, sock, address):
-        peer = Peer.create_from_accepted_socket(sock, address, self.id, self.ring, self.recevied_messages, self.logger)
+        peer = Peer.create_from_accepted_socket(sock, address, self.id, self.ring, self.received_messages, self.logger)
         self._add_peer(peer)
 
     def _add_peer(self, peer):
@@ -72,7 +72,7 @@ class Client(threading.Thread):
 
     def _connect_peer(self, pending):
         try:
-            peer = Peer.create_by_connecting(pending['address'], self.id, self.ring, self.recevied_messages,
+            peer = Peer.create_by_connecting(pending['address'], self.id, self.ring, self.received_messages,
                                              self.logger)
             self._add_peer(peer)
         except socket_error as e:
@@ -102,8 +102,7 @@ class Client(threading.Thread):
     def _process_messages(self):
         while 1:
             try:
-                peer_id, evt = self.recevied_messages.get_nowait()
-                # self.logger.warn(u"Received evt %s from %s", evt, peer_id)
+                peer_id, evt = self.received_messages.get_nowait()
                 if evt.sync_point in self.sync_points:
                     self.sync_points[evt.sync_point].on_event(evt, peer_id)
                 else:
