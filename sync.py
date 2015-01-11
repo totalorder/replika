@@ -6,20 +6,24 @@ from util import HierarchyLogger
 
 
 class SyncPoint(object):
-    def __init__(self, id, mount_path, send, logger):
+    def __init__(self, id, mount_path, send_event, send_file, logger):
         self.id = id
         self.mount_path = mount_path
         self.started = False
         self.watch = None
-        self.send = send
+        self.send_event = send_event
+        self.send_file = send_file
         self.logger = HierarchyLogger(lambda: u"SyncPoint %s" % self.id, logger)
-        self.remote_handler = RemoteEventHandler(mount_path, send, logger)
+        self.remote_handler = RemoteEventHandler(mount_path, send_event, self._send_file, logger)
+
+    def _send_file(self, path, peer_id):
+        self.send_file(self.id, path, peer_id)
 
     def start(self, observer):
         if self.started:
             return False
         else:
-            event_handler = ReplikaFileSystemEventHandler(self.id, self.send)
+            event_handler = ReplikaFileSystemEventHandler(self.id, self.mount_path, self.send_event)
             self.watch = observer.schedule(event_handler, self.mount_path, recursive=True)
             return True
 
@@ -37,10 +41,11 @@ class SyncPoint(object):
 
 
 class RemoteEventHandler(object):
-    def __init__(self, mount_point, send, logger):
+    def __init__(self, mount_point, send_event, send_file, logger):
         self.logger = logger
         self.mount_point = mount_point
-        self.send = send
+        self.send_event = send_event
+        self.send_file = send_file
         self.handlers = {EventType.FETCH: self.on_fetch,
                          EventType.CREATE: self.on_create,
                          EventType.DELETE: self.on_delete,
@@ -49,6 +54,7 @@ class RemoteEventHandler(object):
 
     def on_fetch(self, evt, sender):
         self.logger.info(u"FETCH %s from %s", evt, sender)
+        self.send_file(evt.source_path, sender)
 
     def on_create(self, evt, sender):
         self.logger.info(u"CREATE %s from %s", evt, sender)
@@ -61,9 +67,9 @@ class RemoteEventHandler(object):
         source_path = jn(self.mount_point, evt.source_path)
         source_exists = exists(source_path)
         if not source_exists or (source_exists and getsize(source_path) != evt.size):
-            self.send(EventType.create(EventType.FETCH, evt.sync_point, evt.source_path), sender)
+            self.send_event(EventType.create(EventType.FETCH, evt.sync_point, evt.source_path), sender)
         else:
-            print "Skip"
+            self.logger.info(u"Skipping equal file %s - %s", evt.sync_point, evt.source_path)
 
     def on_move(self, evt, sender):
         self.logger.info(u"MOVE %s from %s", evt, sender)
