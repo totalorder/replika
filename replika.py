@@ -32,7 +32,8 @@ class Client(threading.Thread):
         connection_type = Peer.recvdata(sock, "B")
         if connection_type == ConnectionType.PEER:
             peer = Peer.create_from_accepted_socket(sock, address, self.id, self.ring, self.received_messages,
-                                                    self._peer_dead, self._get_sync_point_info, self.logger)
+                                                    self._peer_dead, self._get_sync_point_info, self._signal,
+                                                    self.logger)
             self._add_peer(peer, outgoing=False)
         elif connection_type == ConnectionType.FILE_PIPE:
             remote_id = Peer.recvmessage(sock)
@@ -43,42 +44,40 @@ class Client(threading.Thread):
 
     def _peer_dead(self, peer):
         with self.add_peer_lock:
-            # self.logger.info(u"Peers: %s", str(self.peers))
             if self.peers.get(peer.id) == peer:
                 self.logger.error(u"Removing dead peer: %s", peer.id)
                 del self.peers[peer.id]
 
     def _add_peer(self, peer, outgoing):
         if peer.ring != self.ring:
-            self.logger.info(u"Remote %s ring %s differs from local ring %s", peer.id, peer.ring, self.id)
+            self.logger.info(u"Remote %s ring %s differs from local ring %s", peer, peer.ring, self.id)
             return
         with self.add_peer_lock:
-            direction = u"outgoing" if outgoing else u"incoming"
-            self.logger.info(u"Adding %s peer", direction)
+            self.logger.info(u"Adding %s", peer)
             if peer.id in self.peers:
-                self.logger.info(u"%s peer %s already connected", direction, peer.id)
+                self.logger.info(u"%s already connected", peer)
                 if outgoing:
                     if self.id < peer.id:
-                        self.logger.info(u"Stopping %s peer %s", direction, peer.id)
+                        self.logger.info(u"Stopping %s", peer)
                         peer.stop()
                     else:
-                        self._replace_peer(peer, direction)
+                        self._replace_peer(peer)
                 else:
                     if self.id > peer.id:
-                        self.logger.info(u"Stopping %s peer %s", direction, peer.id)
+                        self.logger.info(u"Stopping %s", peer)
                         peer.stop()
                     else:
-                        self._replace_peer(peer, direction)
+                        self._replace_peer(peer)
 
-                    self.logger.info(u"Stopping %s peer %s", direction, peer.id)
+                    self.logger.info(u"Stopping %s" % peer)
             else:
-                self.logger.info(u"Adding peer %s", peer.id)
+                self.logger.info(u"Adding %s", peer)
                 self.peers[peer.id] = peer
                 peer.start()
 
-    def _replace_peer(self, peer, direction):
-        self.logger.info(u"Replacing peer %s with %s peer",
-                         peer.id, direction)
+    def _replace_peer(self, peer):
+        self.logger.info(u"Replacing %s with %s",
+                         self.peers[peer.id], peer)
         self.peers[peer.id].stop()
         self.peers[peer.id] = peer
         peer.start()
@@ -94,7 +93,7 @@ class Client(threading.Thread):
             self._connect_peers()
             self._process_messages()
             time.sleep(1)
-            # self.logger.info(u"%s", self.peers)
+            # self.logger.info(u"%s", self.peers.values())
 
     def stop(self):
         if self.running:
@@ -113,10 +112,14 @@ class Client(threading.Thread):
     def _get_sync_point_info(self):
         return {sync_point.id: sync_point.mount_path for sync_point in self.sync_points.values()}
 
+    def _signal(self, sync_point, source_path, event_type):
+        self.sync_points[sync_point].signal(source_path, event_type)
+
     def _connect_peer(self, pending):
         try:
-            peer = Peer.create_by_connecting(pending['address'], self.id, self.ring, self.received_messages,
-                                             self._peer_dead, self._get_sync_point_info, self.logger)
+            peer = Peer.create_by_connecting(pending['address'], self.id, self.ring, self.listener.port,
+                                             self.received_messages, self._peer_dead, self._get_sync_point_info,
+                                             self._signal, self.logger)
             self._add_peer(peer, outgoing=True)
         except socket_error as e:
             if e.errno != errno.ECONNREFUSED:
@@ -153,11 +156,11 @@ class Client(threading.Thread):
             except Queue.Empty:
                 break
 
-    def _send_event(self, msg, recipient=None):
+    def _send_event(self, evt, recipient=None):
         if recipient is None:
-            [peer.send_event(msg) for peer in self.peers.values()]
+            [peer.send_event(evt) for peer in self.peers.values()]
         else:
-            self.peers[recipient].send_event(msg)
+            self.peers[recipient].send_event(evt)
 
     def _send_file(self, sync_point, path, recipient):
         self.peers[recipient].send_file(sync_point, self.sync_points[sync_point].mount_path, path)

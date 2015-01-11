@@ -32,17 +32,19 @@ class ReplikaFileSystemEventHandler(FileSystemEventHandler):
 
     def on_moved(self, event):
         super(ReplikaFileSystemEventHandler, self).on_moved(event)
-        # what = u'directory' if event.is_directory else u'file'
         self.send_event(EventType.create(EventType.MOVE, self.id, source_path=self.relpath(event.src_path),
-                                   destination_path=self.relpath(event.dest_path)))
+                                   destination_path=self.relpath(event.dest_path), is_directory=event.is_directory))
 
     def on_created(self, event):
         super(ReplikaFileSystemEventHandler, self).on_created(event)
-        self.send_event(EventType.create(EventType.CREATE, self.id, source_path=self.relpath(event.src_path)))
+        if event.is_directory:
+            self.send_event(EventType.create(EventType.CREATE, self.id, source_path=self.relpath(event.src_path),
+                                             is_directory=event.is_directory))
 
     def on_deleted(self, event):
         super(ReplikaFileSystemEventHandler, self).on_deleted(event)
-        self.send_event(EventType.create(EventType.DELETE, self.id, source_path=self.relpath(event.src_path)))
+        self.send_event(EventType.create(EventType.DELETE, self.id, source_path=self.relpath(event.src_path),
+                                         is_directory=event.is_directory))
 
     def on_modified(self, event):
         super(ReplikaFileSystemEventHandler, self).on_modified(event)

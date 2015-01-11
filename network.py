@@ -21,10 +21,10 @@ class EventType(object):
 
     fields = {
         FETCH: [('source_path', 's')],
-        CREATE: [('source_path', 's')],
-        DELETE: [('source_path', 's')],
+        CREATE: [('source_path', 's'), ('is_directory', '?')],
+        DELETE: [('source_path', 's'), ('is_directory', '?')],
         MODIFY: [('source_path', 's'), ('size', 'I'), ('hash', 's'), ('modified_date', 'd')],
-        MOVE: [('source_path', 's'), ('destination_path', 's')]
+        MOVE: [('source_path', 's'), ('destination_path', 's'), ('is_directory', '?')]
     }
 
     header = "!BB"
@@ -91,9 +91,12 @@ class NoDataReceivedException(Exception):
 
 
 class Peer(threading.Thread):
-    def __init__(self, id, client_id, ring, sock, address, received_messages, peer_dead_callback, get_sync_point_info, logger):
+    def __init__(self, id, client_id, ring, sock, address, received_messages, peer_dead_callback, get_sync_point_info,
+                 signal, outgoing, logger):
         super(Peer, self).__init__()
-        self.logger = HierarchyLogger(lambda: u"Peer %s" % self.id, logger)
+        self.outgoing = outgoing
+        self.direction = 'out' if self.outgoing else 'in'
+        self.logger = HierarchyLogger(lambda: u"Peer %s (%s)" % (self.id, self.direction), logger)
         self.id = id
         self.ring = ring
         self.sock = sock
@@ -102,7 +105,10 @@ class Peer(threading.Thread):
         self.received_messages = received_messages
         self.unsent_messages = Queue.Queue()
         self.peer_dead_callback = peer_dead_callback
-        self.file_pipe = FilePipe(client_id, self.address, get_sync_point_info, self.logger)
+        self.file_pipe = FilePipe(client_id, self.address, get_sync_point_info, signal, self.logger)
+
+    def __repr__(self):
+        return u"Peer %s (%s)" % (self.id, self.direction)
 
     def stop(self):
         if self.running:
@@ -151,25 +157,31 @@ class Peer(threading.Thread):
         self.file_pipe.send_file(sync_point, mount_path, path)
 
     @classmethod
-    def create_from_accepted_socket(cls, sock, address, id, ring, received_messages, peer_dead, get_sync_point_names, logger):
+    def create_from_accepted_socket(cls, sock, address, id, ring, received_messages, peer_dead, get_sync_point_names,
+                                    signal, logger):
         remote_id = cls.recvmessage(sock)
         remote_ring = cls.recvmessage(sock)
-        logger.info(u"Connected from %s", remote_id)
+        listen_port = cls.recvdata(sock, "H")
+        logger.info(u"Connected from %s (listen: %s)", remote_id, listen_port)
         cls.sendmessage(sock, id)
         cls.sendmessage(sock, ring)
-        return cls(remote_id, id, remote_ring, sock, address, received_messages, peer_dead, get_sync_point_names, logger)
+        return cls(remote_id, id, remote_ring, sock, (address[0], listen_port), received_messages, peer_dead,
+                   get_sync_point_names, signal, False, logger)
 
     @classmethod
-    def create_by_connecting(cls, address, id, ring, recevied_messages, peer_dead, get_sync_point_names, logger):
+    def create_by_connecting(cls, address, id, ring, listen_port, recevied_messages, peer_dead, get_sync_point_names,
+                             signal, logger):
         sock = socket.socket()
         sock.connect(address)
         cls.senddata(sock, "B", ConnectionType.PEER)
         cls.sendmessage(sock, id)
         cls.sendmessage(sock, ring)
+        cls.senddata(sock, "H", listen_port)
         remote_id = cls.recvmessage(sock)
         remote_ring = cls.recvmessage(sock)
         logger.info(u"Connected to %s", remote_id)
-        return cls(remote_id, id, remote_ring, sock, address, recevied_messages, peer_dead, get_sync_point_names, logger)
+        return cls(remote_id, id, remote_ring, sock, address, recevied_messages, peer_dead, get_sync_point_names,
+                   signal, True, logger)
 
     @classmethod
     def sendmessage(cls, sock, msg):
@@ -261,17 +273,37 @@ class FilePipeSender(threading.Thread):
         self.address = address
         self.sender_dead_callback = sender_dead_callback
         self.logger = HierarchyLogger(lambda: u"PipeSender", logger)
+        self.attempts = 0
+        self.max_attemps = 3
         super(FilePipeSender, self).__init__()
 
     def run(self):
+        while 1:
+            try:
+                self._run()
+                return
+            except Exception as e:
+                self.attempts += 1
+                if self.attempts >= self.max_attemps:
+                    self.logger.error(u"Unknown error: %s (stopping after %s attempts)", e, self.max_attemps)
+                    return
+                else:
+                    self.logger.error(u"Unknown error: %s, address: %s (restarting)", e, self.address)
+                    time.sleep(5)
+
+    def _run(self):
         sock = socket.socket()
         sock.connect(self.address)
         self.logger.info(u"Connecting to %s", str(self.address))
         Peer.senddata(sock, "B", ConnectionType.FILE_PIPE)
+        self.logger.info(u"Sending client_id: %s", self.client_id)
         Peer.sendmessage(sock, self.client_id)
         while 1:
             try:
                 sync_point, mount_path, path = self.queue.get_nowait()
+            except Queue.Empty:
+                break
+            try:
                 self.logger.info(u"Sending file %s - %s", sync_point, path)
                 full_path = jn(mount_path, path)
                 file_size = getsize(full_path)
@@ -285,17 +317,21 @@ class FilePipeSender(threading.Thread):
                         if not chunk:
                             break  # EOF
                         sock.sendall(chunk)
-            except Queue.Empty:
-                break
+            except Exception:
+                self.queue.put((sync_point, mount_path, path))
+                raise
+            self.attempts = 0
         self.sender_dead_callback(self)
 
 
 class FilePipeReceiver(threading.Thread):
-    def __init__(self, sock, get_sync_point_info, receiver_dead_callback, logger):
+    def __init__(self, sock, get_sync_point_info, signal, receiver_dead_callback, logger):
         self.sock = sock
         self.logger = HierarchyLogger(lambda: u"PipeReceiver", logger)
+        # self.logger.off()
         self.get_sync_point_info = get_sync_point_info
         self.receiver_dead_callback = receiver_dead_callback
+        self.signal = signal
         super(FilePipeReceiver, self).__init__()
 
     def run(self):
@@ -339,14 +375,19 @@ class FilePipeReceiver(threading.Thread):
             target_path = jn(self.get_sync_point_info()[sync_point], file_path)
             target_dir = dirname(full_path)
             if not exists(target_dir):
+                self.signal(sync_point, file_path, EventType.CREATE)
                 makedirs(target_dir)
             os.utime(full_path, (os.path.getatime(full_path), file_modified_date))
+            if exists(target_path):
+                self.signal(sync_point, file_path, EventType.MODIFY)
+            else:
+                self.signal(sync_point, file_path, EventType.MODIFY)
             shutil.copy2(full_path, target_path)
         self.receiver_dead_callback(self)
 
 
 class FilePipe(object):
-    def __init__(self, client_id, address, get_sync_point_info, logger, max_size=5):
+    def __init__(self, client_id, address, get_sync_point_info, signal, logger, max_size=5):
         self.senders = []
         self.receivers = []
         self.queue = Queue.Queue()
@@ -355,6 +396,7 @@ class FilePipe(object):
         self.address = address
         self.logger = logger
         self.get_sync_point_info = get_sync_point_info
+        self.signal = signal
 
     def send_file(self, sync_point, mount_path, path):
         self.queue.put((sync_point, mount_path, path))
@@ -365,7 +407,7 @@ class FilePipe(object):
             worker.start()
 
     def create_receiver(self, sock):
-        receiver = FilePipeReceiver(sock, self.get_sync_point_info, self.receiver_dead, self.logger)
+        receiver = FilePipeReceiver(sock, self.get_sync_point_info, self.signal, self.receiver_dead, self.logger)
         self.receivers.append(receiver)
         receiver.start()
 
