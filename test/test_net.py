@@ -108,6 +108,29 @@ class TestListener:
                                                       (self.sock, self.remote_address))
 
 
+class TestClient:
+    def setup_method(self, method):
+        self.sender = net.Client()
+        self.receiver  = net.Client()
+        self.sender.outgoing = self.receiver.incoming
+
+    def test_recvbytes(self):
+        [self.receiver.incoming.put(c) for c in "Hello by"]
+        self.receiver.incoming.put("tes!")
+        assert self.receiver.recvbytes(5) == "Hello"
+        assert self.receiver.recvbytes(1) == " "
+        assert self.receiver.recvbytes(3) == "byt"
+        assert self.receiver.recvbytes(3) == "es!"
+
+    def test_transfer_data(self):
+        self.sender.senddata("I?", 123456, True)
+        assert self.receiver.recvdata("I?") == (123456, True)
+
+    def test_transfer_message(self):
+        self.sender.sendmessage("Hello bytes!")
+        assert self.receiver.recvmessage() == "Hello bytes!"
+
+
 class TestIntegration:
     def setup_method(self, method):
         self.loop = async.Loop()

@@ -2,6 +2,7 @@
 import socket
 import select
 import Queue
+import struct
 import async
 import signals
 from util import HierarchyLogger
@@ -52,12 +53,46 @@ class Client(object):
         self.incoming = Queue.Queue()
         self.outgoing = Queue.Queue()
         self.incoming_get = self.incoming.get_nowait if self.async else self.incoming.get
+        self.outstanding_received_data = ""
 
     def send(self, data):
         self.outgoing.put(data)
 
     def recv(self):
         return self.incoming_get()
+
+    def sendmessage(self, msg):
+        self.send(struct.pack("!I", len(msg)) + msg)
+
+    def senddata(self, format, *data):
+        packed = struct.pack("!" + format, *data)
+        self.send(packed)
+
+    def recvdata(self, format):
+        data = self.recvbytes(struct.calcsize(format))
+        return struct.unpack("!" + format, data)
+
+    def recvmessage(self):
+        num = struct.unpack("!I", self.recvbytes(4))[0]
+        msg = self.recvbytes(num)
+        return msg
+
+    def recvbytes(self, num):
+        chunks = []
+        bytes_recd = 0
+        if self.outstanding_received_data:
+            chunks.append(self.outstanding_received_data)
+            bytes_recd += len(self.outstanding_received_data)
+
+        while 1:
+            if bytes_recd >= num:
+                data = "".join(chunks)
+                self.outstanding_received_data = data[num:]
+                return data[:num]
+
+            chunk = self.recv()
+            chunks.append(chunk)
+            bytes_recd += len(chunk)
 
 
 class Network(async.EventThread):
