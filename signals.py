@@ -4,6 +4,14 @@ from collections import defaultdict
 import async
 
 
+class Signal(object):
+    def __init__(self, id):
+        self.id = id
+
+    def __repr__(self):
+        return self.id
+
+
 class Processor(async.EventThread):
     def __init__(self, *args, **kwargs):
         super(Processor, self).__init__(*args, **kwargs)
@@ -18,7 +26,10 @@ class Processor(async.EventThread):
         try:
             signal_code, data = self.signals_get()
             for recipient in self.registry[signal_code]:
-                recipient(signal_code, data)
+                if isinstance(recipient, Queue.Queue):
+                    recipient.put((signal_code, data))
+                else:
+                    recipient(signal_code, data)
         except Queue.Empty:
             return True
 
