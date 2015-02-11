@@ -2,6 +2,7 @@
 import queue
 from unittest.mock import Mock
 import async
+from async import F
 
 
 class FakeRunner(async.EventThread):
@@ -49,7 +50,7 @@ class TestEventThread:
             return
 
         event_thread = async.EventThread()
-        event_thread.add_async(async_action())
+        event_thread.add_async(F(async_action()))
         event_thread.execute_asyncs()
         assert results == [1]
         event_thread.execute_asyncs()

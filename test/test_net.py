@@ -137,10 +137,10 @@ class TestClient:
     def test_recvbytes(self):
         [self.receiver.incoming.put(bytes(c, 'utf-8')) for c in "Hello by"]
         self.receiver.incoming.put(b"tes!")
-        assert self.receiver.recvbytes(5) == b"Hello"
-        assert self.receiver.recvbytes(1) == b" "
-        assert self.receiver.recvbytes(3) == b"byt"
-        assert self.receiver.recvbytes(3) == b"es!"
+        assert next(self.receiver.recvbytes(5)) == b"Hello"
+        assert next(self.receiver.recvbytes(1)) == b" "
+        assert next(self.receiver.recvbytes(3)) == b"byt"
+        assert next(self.receiver.recvbytes(3)) == b"es!"
 
     def test_transfer_data(self):
         self.sender.senddata("I?", 123456, True)
@@ -148,7 +148,7 @@ class TestClient:
 
     def test_transfer_message(self):
         self.sender.sendmessage(b"Hello bytes!")
-        assert self.receiver.recvmessage() == b"Hello bytes!"
+        assert next(self.receiver.recvmessage()) == b"Hello bytes!"
 
     def test_recvbytes_async(self):
         [self.receiver.incoming.put(bytes(c, 'utf-8')) for c in "Hello by"]

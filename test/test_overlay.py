@@ -31,27 +31,27 @@ class TestOverlay:
         self.incoming_client_2.recvmessage.return_value = "1"
 
     def test_accept_client(self):
-        self.overlay_1.accept_client(self.incoming_client_1)
+        self.overlay_1.accept_client(self.incoming_client_1).run()
         assert self.overlay_1.peers["2"] == self.incoming_client_1
 
     def test_accept_lower_incoming_then_outgoing(self):
-        self.overlay_1.accept_client(self.incoming_client_1)
-        self.overlay_1.accept_client(self.outgoing_client_1)
+        self.overlay_1.accept_client(self.incoming_client_1).run()
+        self.overlay_1.accept_client(self.outgoing_client_1).run()
         assert self.overlay_1.peers["2"] == self.incoming_client_1
 
     def test_accept_lower_outgoing_then_incoming(self):
-        self.overlay_1.accept_client(self.outgoing_client_1)
-        self.overlay_1.accept_client(self.incoming_client_1)
+        self.overlay_1.accept_client(self.outgoing_client_1).run()
+        self.overlay_1.accept_client(self.incoming_client_1).run()
         assert self.overlay_1.peers["2"] == self.incoming_client_1
 
     def test_accept_higher_incoming_then_outgoing(self):
-        self.overlay_2.accept_client(self.incoming_client_2)
-        self.overlay_2.accept_client(self.outgoing_client_2)
+        self.overlay_2.accept_client(self.incoming_client_2).run()
+        self.overlay_2.accept_client(self.outgoing_client_2).run()
         assert self.overlay_2.peers["1"] == self.outgoing_client_2
 
     def test_accept_higher_outgoing_then_incoming(self):
-        self.overlay_2.accept_client(self.outgoing_client_2)
-        self.overlay_2.accept_client(self.incoming_client_2)
+        self.overlay_2.accept_client(self.outgoing_client_2).run()
+        self.overlay_2.accept_client(self.incoming_client_2).run()
         assert self.overlay_2.peers["1"] == self.outgoing_client_2
 
 

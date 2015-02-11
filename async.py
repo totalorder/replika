@@ -31,8 +31,8 @@ class EventThread(threading.Thread):
         actions_completed = False
         for action in self.async_actions[:]:
             try:
-                next(action)
-            except StopIteration:
+                action.get()
+            except action.NotAvailable:
                 self.async_actions.remove(action)
                 actions_completed = True
         return not actions_completed
@@ -77,3 +77,26 @@ class Loop:
             else:
                 last_done = None
             self.runners.put(runner)
+
+
+class F:
+    class NotAvailable(Exception):
+        pass
+
+    def __init__(self, generator):
+        self.generator = generator
+
+    def get(self, blocking=False):
+        if not blocking:
+            try:
+                return next(self.generator)
+            except StopIteration:
+                raise F.NotAvailable()
+        else:
+            try:
+                return list(self.generator)[0]
+            except IndexError:
+                raise F.NotAvailable()
+
+    def run(self):
+        list(self.generator)

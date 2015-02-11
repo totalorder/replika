@@ -82,7 +82,7 @@ class Client(object):
         self.send(packed)
 
     def recvdata(self, format):
-        data = self.recvbytes(struct.calcsize(format))
+        data = next(self.recvbytes(struct.calcsize(format)))
         return struct.unpack("!" + format, data)
 
     def recvmessage(self, async=False):
@@ -90,28 +90,20 @@ class Client(object):
             async_bytes = self.recvbytes(4, async)
             print("async_bytes, async", async_bytes, async)
             bytes = None
-            if async:
-                for result in async_bytes:
-                    if result is None:
-                        yield
-                    else:
-                        bytes = result
-                        break
-            else:
-                bytes = async_bytes
+            for result in async_bytes:
+                if result is None:
+                    yield
+                else:
+                    bytes = result
+                    break
 
             num = struct.unpack("!I", bytes)[0]
             msg = self.recvbytes(num, async)
-            if async:
-                for result in msg:
-                    yield result
-            else:
-                yield msg
+            for result in msg:
+                yield result
 
-        if async:
-            return async_recvmessage()
-        else:
-            return next(async_recvmessage())
+        return async_recvmessage()
+
 
     def recvbytes(self, num, async=False):
         def async_recvbytes():
@@ -133,17 +125,11 @@ class Client(object):
                         break
                     except Client.NoDataReceived:
                         self.outstanding_received_data = ''.join(chunks)
-                        if async:
-                            yield
-                        else:
-                            raise
+                        yield
                 #print "Recv: ", chunk
                 chunks.append(chunk)
                 bytes_recd += len(chunk)
-        if not async:
-            return next(async_recvbytes())
-        else:
-            return async_recvbytes()
+        return async_recvbytes()
 
 
 class Network(async.EventThread):
