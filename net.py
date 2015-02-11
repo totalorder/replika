@@ -85,10 +85,9 @@ class Client(object):
         data = next(self.recvbytes(struct.calcsize(format)))
         return struct.unpack("!" + format, data)
 
-    def recvmessage(self, async=False):
+    def recvmessage(self):
         def async_recvmessage():
-            async_bytes = self.recvbytes(4, async)
-            print("async_bytes, async", async_bytes, async)
+            async_bytes = self.recvbytes(4)
             bytes = None
             for result in async_bytes:
                 if result is None:
@@ -98,14 +97,14 @@ class Client(object):
                     break
 
             num = struct.unpack("!I", bytes)[0]
-            msg = self.recvbytes(num, async)
+            msg = self.recvbytes(num)
             for result in msg:
                 yield result
 
         return async_recvmessage()
 
 
-    def recvbytes(self, num, async=False):
+    def recvbytes(self, num):
         def async_recvbytes():
             chunks = []
             bytes_recd = 0

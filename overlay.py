@@ -28,10 +28,10 @@ class Overlay(async.EventThread):
             signal_code, client = self.accepted_clients.get_nowait()
             print("Step: signal_code", self.id, signal_code)
             if self.async:
-                async_accept_client = self.accept_client(client, async=True)
+                async_accept_client = self.accept_client(client)
                 self.add_async(async_accept_client)
             else:
-                self.accept_client(client)
+                self.accept_client(client).run()
             accepted_client = True
         except queue.Empty:
             pass
@@ -39,13 +39,13 @@ class Overlay(async.EventThread):
         if self.execute_asyncs() and not accepted_client:
             return True
 
-    def accept_client(self, client, async=False):
+    def accept_client(self, client):
         def async_accept_client():
             if client.is_outgoing:
                 client.sendmessage(bytes(self.id, 'utf-8'))
                 print(self.id, client.id, "out?")
 
-                for async_result in client.recvmessage(async=True):
+                for async_result in client.recvmessage():
                     if async_result is not None:
                         client.id = async_result
                         print(self.id, client.id, "out!")
@@ -53,7 +53,7 @@ class Overlay(async.EventThread):
                         yield
 
             else:
-                for async_result in client.recvmessage(async=True):
+                for async_result in client.recvmessage():
                     if async_result is not None:
                         client.id = async_result
                         print(self.id, client.id, "in")

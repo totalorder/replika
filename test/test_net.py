@@ -151,13 +151,13 @@ class TestClient:
         assert next(self.receiver.recvmessage()) == b"Hello bytes!"
 
     def test_recvbytes_async(self):
+        async_bytes = self.receiver.recvbytes(12)
         [self.receiver.incoming.put(bytes(c, 'utf-8')) for c in "Hello by"]
         self.receiver.incoming.put(b"tes!")
-        async_bytes = self.receiver.recvbytes(12, async=True)
         assert list(async_bytes).pop() == b"Hello bytes!"
 
     def test_transfer_message_async(self):
-        async_message = self.receiver.recvmessage(async=True)
+        async_message = self.receiver.recvmessage()
         assert next(async_message) == None
         self.sender.sendmessage(b"Hello bytes!")
         assert next(async_message) == b"Hello bytes!"

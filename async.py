@@ -94,7 +94,7 @@ class F:
                 raise F.NotAvailable()
         else:
             try:
-                return list(self.generator)[0]
+                return list(self.generator).pop()
             except IndexError:
                 raise F.NotAvailable()
 
