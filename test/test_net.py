@@ -4,15 +4,10 @@ import socket
 from mock import Mock, ANY, patch, call
 import async
 import net
-import signals
+from test.testutils import get_spy_processor
 import util
 import errno
 from socket import error as socket_error
-
-
-def get_spy_processor():
-    processor = signals.Processor(async=True)
-    return Mock(spec=signals.Processor, wraps=processor)
 
 
 class TestNetwork:
@@ -81,6 +76,31 @@ class TestNetwork:
         assert self.sock.accept.call_count == 2
         self.processor.signal.assert_called_with(net.Listener.CONNECTION_ACCEPTED, ANY)
 
+    def test_do_connect(self):
+        loop = async.Loop()
+        loop.add_runner(self.processor)
+        loop.add_runner(self.network)
+
+        self.processor.signal(net.Network.DO_CONNECT, ("127.0.0.1", 8000))
+        loop.run_until_done()
+
+        self.processor.signal.assert_called_with(net.Network.CLIENT_ACCEPTED, ANY)
+
+    def test_failed_connect(self):
+        fake_socket = self.socket_mock()
+        def raise_refused(address):
+            error = socket_error()
+            error.errno = errno.ECONNREFUSED
+            raise error
+        fake_socket.connect.side_effect = raise_refused
+
+        loop = async.Loop()
+        loop.add_runner(self.processor)
+        loop.add_runner(self.network)
+        self.processor.signal(net.Network.DO_CONNECT, ("127.0.0.1", 8000))
+        loop.run_until_done()
+        self.processor.signal.assert_called_with(net.Network.FAILED_DO_CONNECT, ("127.0.0.1", 8000))
+
 
 class TestListener:
     def setup_method(self, method):
@@ -110,8 +130,8 @@ class TestListener:
 
 class TestClient:
     def setup_method(self, method):
-        self.sender = net.Client()
-        self.receiver  = net.Client()
+        self.sender = net.Client(("127.0.0.1", 8000), True)
+        self.receiver = net.Client(("127.0.0.1", 8001), False)
         self.sender.outgoing = self.receiver.incoming
 
     def test_recvbytes(self):
@@ -130,6 +150,17 @@ class TestClient:
         self.sender.sendmessage("Hello bytes!")
         assert self.receiver.recvmessage() == "Hello bytes!"
 
+    def test_recvbytes_async(self):
+        [self.receiver.incoming.put(c) for c in "Hello by"]
+        self.receiver.incoming.put("tes!")
+        async_bytes = self.receiver.recvbytes(12, async=True)
+        assert list(async_bytes).pop() == "Hello bytes!"
+
+    def test_transfer_message_async(self):
+        async_message = self.receiver.recvmessage(async=True)
+        assert async_message.next() == None
+        self.sender.sendmessage("Hello bytes!")
+        assert async_message.next() == "Hello bytes!"
 
 class TestIntegration:
     def setup_method(self, method):

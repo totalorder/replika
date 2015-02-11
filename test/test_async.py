@@ -37,3 +37,22 @@ class TestLoop:
         assert fake_runner_1.steps == 3
         assert fake_runner_2.steps == 2
         assert loop.runners.get.call_count == 5
+
+
+class TestEventThread:
+    def test_suspending_actions(self):
+        results = []
+
+        def async_action():
+            yield results.append(1)
+            yield results.append(2)
+            return
+
+        event_thread = async.EventThread()
+        event_thread.add_async(async_action())
+        event_thread.execute_asyncs()
+        assert results == [1]
+        event_thread.execute_asyncs()
+        assert results == [1, 2]
+        event_thread.execute_asyncs()
+        assert results == [1, 2]

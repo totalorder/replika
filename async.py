@@ -8,6 +8,7 @@ class EventThread(threading.Thread):
         super(EventThread, self).__init__(*args, **kwargs)
         self.running = False
         self.async = async
+        self.async_actions = []
 
     def setup(self):
         pass
@@ -25,6 +26,19 @@ class EventThread(threading.Thread):
             self.running = False
             if self.is_alive:
                 self.join()
+
+    def execute_asyncs(self):
+        actions_completed = False
+        for action in self.async_actions[:]:
+            try:
+                action.next()
+            except StopIteration:
+                self.async_actions.remove(action)
+                actions_completed = True
+        return not actions_completed
+
+    def add_async(self, action):
+        self.async_actions.append(action)
 
     def run(self):
         if self.async:
