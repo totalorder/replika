@@ -1,7 +1,7 @@
 # encoding: utf-8
-import Queue
+import queue
 import socket
-from mock import Mock, ANY, patch, call
+from unittest.mock import Mock, ANY, patch, call
 import async
 import net
 from test.testutils import get_spy_processor
@@ -42,12 +42,12 @@ class TestNetwork:
 
     def test_recv_data(self):
         fake_socket = self.socket_mock()
-        fake_socket.recv.return_value = "Hello bytes!"
+        fake_socket.recv.return_value = b"Hello bytes!"
         client = self.network.connect(fake_socket)
         select_return_values = [([fake_socket], [], []), ([], [], [])]
         with patch('select.select', lambda x, y, z, *args: select_return_values.pop(0)):
             self.network.step_until_done()
-        assert client.recv() == "Hello bytes!"
+        assert client.recv() == b"Hello bytes!"
 
     def test_send_data(self):
         fake_socket = self.socket_mock()
@@ -55,13 +55,13 @@ class TestNetwork:
         fake_socket.send.side_effect = lambda x: fake_socket_send_return_values.pop(0)
 
         client = self.network.connect(fake_socket)
-        client.send("Hello bytes!")
+        client.send(b"Hello bytes!")
         select_return_values = [([], [fake_socket], []), ([], [fake_socket], []),
                                 ([], [fake_socket], []), ([], [fake_socket], []),
                                 ([], [fake_socket], []), ([], [], [])]
         with patch('select.select', lambda x, y, z, *args: select_return_values.pop(0)):
             self.network.step_until_done()
-        assert fake_socket.send.call_args_list == [call("Hello bytes!"), call(" bytes!"), call("s!")]
+        assert fake_socket.send.call_args_list == [call(b"Hello bytes!"), call(b" bytes!"), call(b"s!")]
 
     def test_listen(self):
         self.socket_mock.return_value = self.sock
@@ -135,32 +135,32 @@ class TestClient:
         self.sender.outgoing = self.receiver.incoming
 
     def test_recvbytes(self):
-        [self.receiver.incoming.put(c) for c in "Hello by"]
-        self.receiver.incoming.put("tes!")
-        assert self.receiver.recvbytes(5) == "Hello"
-        assert self.receiver.recvbytes(1) == " "
-        assert self.receiver.recvbytes(3) == "byt"
-        assert self.receiver.recvbytes(3) == "es!"
+        [self.receiver.incoming.put(bytes(c, 'utf-8')) for c in "Hello by"]
+        self.receiver.incoming.put(b"tes!")
+        assert self.receiver.recvbytes(5) == b"Hello"
+        assert self.receiver.recvbytes(1) == b" "
+        assert self.receiver.recvbytes(3) == b"byt"
+        assert self.receiver.recvbytes(3) == b"es!"
 
     def test_transfer_data(self):
         self.sender.senddata("I?", 123456, True)
         assert self.receiver.recvdata("I?") == (123456, True)
 
     def test_transfer_message(self):
-        self.sender.sendmessage("Hello bytes!")
-        assert self.receiver.recvmessage() == "Hello bytes!"
+        self.sender.sendmessage(b"Hello bytes!")
+        assert self.receiver.recvmessage() == b"Hello bytes!"
 
     def test_recvbytes_async(self):
-        [self.receiver.incoming.put(c) for c in "Hello by"]
-        self.receiver.incoming.put("tes!")
+        [self.receiver.incoming.put(bytes(c, 'utf-8')) for c in "Hello by"]
+        self.receiver.incoming.put(b"tes!")
         async_bytes = self.receiver.recvbytes(12, async=True)
-        assert list(async_bytes).pop() == "Hello bytes!"
+        assert list(async_bytes).pop() == b"Hello bytes!"
 
     def test_transfer_message_async(self):
         async_message = self.receiver.recvmessage(async=True)
-        assert async_message.next() == None
-        self.sender.sendmessage("Hello bytes!")
-        assert async_message.next() == "Hello bytes!"
+        assert next(async_message) == None
+        self.sender.sendmessage(b"Hello bytes!")
+        assert next(async_message) == b"Hello bytes!"
 
 class TestIntegration:
     def setup_method(self, method):
@@ -195,20 +195,20 @@ class TestIntegration:
         self.receiving_processor.signal.assert_called_with(net.Network.CLIENT_ACCEPTED, ANY)
 
     def test_send_and_receive_data(self):
-        receiving_accepted_clients = Queue.Queue()
+        receiving_accepted_clients = queue.Queue()
         self.receiving_processor.register(net.Network.CLIENT_ACCEPTED, receiving_accepted_clients)
 
         self.receiving_network.listen(8000, async=True)
         sending_client = self.sending_network.connect(("127.0.0.1", 8000))
-        sending_client.send("Hello bytes!")
+        sending_client.send(b"Hello bytes!")
 
         self.loop.run_until_done()
         self.receiving_processor.signal.assert_called_with(net.Network.CLIENT_ACCEPTED, ANY)
 
         signal_code, receiving_client = receiving_accepted_clients.get_nowait()
         assert signal_code == net.Network.CLIENT_ACCEPTED
-        assert receiving_client.recv() == "Hello bytes!"
+        assert receiving_client.recv() == b"Hello bytes!"
 
-        receiving_client.send("Hello! I got your message!")
+        receiving_client.send(b"Hello! I got your message!")
         self.loop.run_until_done()
-        assert sending_client.recv() == "Hello! I got your message!"
+        assert sending_client.recv() == b"Hello! I got your message!"

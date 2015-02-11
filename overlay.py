@@ -1,5 +1,5 @@
 # encoding: utf-8
-import Queue
+import queue
 import async
 import net
 
@@ -11,8 +11,8 @@ class Overlay(async.EventThread):
         self.network = network
         self.peers = {}
         self.port = port
-        self.accepted_clients = Queue.Queue()
-        self.failed_connects = Queue.Queue()
+        self.accepted_clients = queue.Queue()
+        self.failed_connects = queue.Queue()
         self.id = id
 
     def setup(self):
@@ -23,16 +23,16 @@ class Overlay(async.EventThread):
     def step(self):
         accepted_client = False
         try:
-            print "Step: ", self.id
+            print("Step: ", self.id)
             signal_code, client = self.accepted_clients.get_nowait()
-            print "Step: signal_code", self.id, signal_code
+            print("Step: signal_code", self.id, signal_code)
             if self.async:
                 async_accept_client = self.accept_client(client, async=True)
                 self.add_async(async_accept_client)
             else:
                 self.accept_client(client)
             accepted_client = True
-        except Queue.Empty:
+        except queue.Empty:
             pass
 
         if self.execute_asyncs() and not accepted_client:
@@ -41,14 +41,14 @@ class Overlay(async.EventThread):
     def accept_client(self, client, async=False):
         def async_accept_client():
             if client.is_outgoing:
-                client.sendmessage(self.id)
-                print self.id, client.id, "out?"
+                client.sendmessage(bytes(self.id, 'utf-8'))
+                print(self.id, client.id, "out?")
 
                 if async:
                     for async_result in client.recvmessage(async=True):
                         if async_result is not None:
                             client.id = async_result
-                            print self.id, client.id, "out!"
+                            print(self.id, client.id, "out!")
                         else:
                             yield
                 else:
@@ -59,12 +59,12 @@ class Overlay(async.EventThread):
                     for async_result in client.recvmessage(async=True):
                         if async_result is not None:
                             client.id = async_result
-                            print self.id, client.id, "in"
+                            print(self.id, client.id, "in")
                         else:
                             yield
                 else:
                     client.id = client.recvmessage()
-                client.sendmessage(self.id)
+                client.sendmessage(bytes(self.id, 'utf-8'))
 
             if client.id in self.peers:
                 if not client.is_outgoing:

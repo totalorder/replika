@@ -1,5 +1,5 @@
 # encoding: utf-8
-import Queue
+import queue
 import threading
 
 
@@ -31,7 +31,7 @@ class EventThread(threading.Thread):
         actions_completed = False
         for action in self.async_actions[:]:
             try:
-                action.next()
+                next(action)
             except StopIteration:
                 self.async_actions.remove(action)
                 actions_completed = True
@@ -57,7 +57,7 @@ class EventThread(threading.Thread):
 
 class Loop:
     def __init__(self):
-        self.runners = Queue.Queue()
+        self.runners = queue.Queue()
 
     def add_runner(self, runner):
         self.runners.put(runner)

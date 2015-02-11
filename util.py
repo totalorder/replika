@@ -19,22 +19,22 @@ class HierarchyLogger(object):
 
     def prefix(self):
         if self.parent is not None:
-            return self.parent.prefix() + u", " + self.get_prefix()
+            return self.parent.prefix() + ", " + self.get_prefix()
         else:
             return self.get_prefix()
 
     def info(self, logstr, *args, **kwargs):
         if self.is_on():
-            logging.info(self.prefix() + u": " + logstr, *args, **kwargs)
+            logging.info(self.prefix() + ": " + logstr, *args, **kwargs)
 
     def warn(self, logstr, *args, **kwargs):
         if self.is_on():
-            logging.warn(self.prefix() + u": " + logstr, *args, **kwargs)
+            logging.warn(self.prefix() + ": " + logstr, *args, **kwargs)
 
     def error(self, logstr, *args, **kwargs):
         if self.is_on():
-            logging.error(self.prefix() + u": " + logstr, *args, **kwargs)
+            logging.error(self.prefix() + ": " + logstr, *args, **kwargs)
 
     def debug(self, logstr, *args, **kwargs):
         if self.is_on():
-            logging.debug(self.prefix() + u": " + logstr, *args, **kwargs)
+            logging.debug(self.prefix() + ": " + logstr, *args, **kwargs)

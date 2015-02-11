@@ -1,6 +1,6 @@
 # encoding: utf-8
-import Queue
-from mock import Mock
+import queue
+from unittest.mock import Mock
 import async
 
 
@@ -19,7 +19,7 @@ class FakeRunner(async.EventThread):
 class TestLoop:
     def test_run_until_done_single(self):
         loop = async.Loop()
-        loop.runners = Mock(spec=Queue.Queue, wraps=loop.runners)
+        loop.runners = Mock(spec=queue.Queue, wraps=loop.runners)
         fake_runner_1 = FakeRunner(1)
         loop.add_runner(fake_runner_1)
         loop.run_until_done()
@@ -28,7 +28,7 @@ class TestLoop:
 
     def test_run_until_done_two(self):
         loop = async.Loop()
-        loop.runners = Mock(spec=Queue.Queue, wraps=loop.runners)
+        loop.runners = Mock(spec=queue.Queue, wraps=loop.runners)
         fake_runner_1 = FakeRunner(1)
         fake_runner_2 = FakeRunner(2)
         loop.add_runner(fake_runner_1)

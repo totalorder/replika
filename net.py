@@ -1,7 +1,7 @@
 # encoding: utf-8
 import socket
 import select
-import Queue
+import queue
 import struct
 import async
 import signals
@@ -19,7 +19,7 @@ class Listener(async.EventThread):
         self.port = port
         self.running = False
         self.sock = None
-        self.logger = HierarchyLogger(lambda: u"Listener", logger)
+        self.logger = HierarchyLogger(lambda: "Listener", logger)
 
     def setup(self):
         self.sock = socket.socket()
@@ -28,7 +28,7 @@ class Listener(async.EventThread):
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.sock.bind(("0.0.0.0", self.port))
         self.sock.listen(5)
-        self.logger.info(u"Listening to port %s" % self.port)
+        self.logger.info("Listening to port %s" % self.port)
 
     def step(self):
         try:
@@ -39,11 +39,11 @@ class Listener(async.EventThread):
             else:
                 raise
 
-        self.logger.info(u"Accepted connection from: %s", unicode(remote_address))
+        self.logger.info("Accepted connection from: %s", str(remote_address))
         self.processor.signal(self.CONNECTION_ACCEPTED, (client_sock, remote_address))
 
     def teardown(self):
-        self.logger.info(u"Shut down")
+        self.logger.info("Shut down")
         self.sock.close()
 
 
@@ -55,8 +55,8 @@ class Client(object):
         self.async = async
         self.address = address
         self.is_outgoing = is_outgoing
-        self.incoming = Queue.Queue()
-        self.outgoing = Queue.Queue()
+        self.incoming = queue.Queue()
+        self.outgoing = queue.Queue()
         self.incoming_get = self.incoming.get_nowait if self.async else self.incoming.get
         self.outstanding_received_data = ""
         self.id = None
@@ -65,13 +65,13 @@ class Client(object):
         return "Client(%s: %s, %s)" % (self.id, self.address, "out" if self.is_outgoing else "in")
 
     def send(self, data):
-        print "Send:", data
+        print("Send:", data)
         self.outgoing.put(data)
 
     def recv(self):
         try:
             return self.incoming_get()
-        except Queue.Empty:
+        except queue.Empty:
             raise Client.NoDataReceived
 
     def sendmessage(self, msg):
@@ -88,7 +88,7 @@ class Client(object):
     def recvmessage(self, async=False):
         def async_recvmessage():
             async_bytes = self.recvbytes(4, async)
-            print "async_bytes, async", async_bytes, async
+            print("async_bytes, async", async_bytes, async)
             bytes = None
             if async:
                 for result in async_bytes:
@@ -111,7 +111,7 @@ class Client(object):
         if async:
             return async_recvmessage()
         else:
-            return async_recvmessage().next()
+            return next(async_recvmessage())
 
     def recvbytes(self, num, async=False):
         def async_recvbytes():
@@ -123,7 +123,7 @@ class Client(object):
 
             while 1:
                 if bytes_recd >= num:
-                    data = "".join(chunks)
+                    data = b"".join(chunks)
                     self.outstanding_received_data = data[num:]
                     yield data[:num]
                     return
@@ -141,7 +141,7 @@ class Client(object):
                 chunks.append(chunk)
                 bytes_recd += len(chunk)
         if not async:
-            return async_recvbytes().next()
+            return next(async_recvbytes())
         else:
             return async_recvbytes()
 
@@ -158,11 +158,11 @@ class Network(async.EventThread):
         self.outstanding_writes = {}
         self.empty = []
         self.select_args = []
-        self.logger = HierarchyLogger(lambda: u"Network")
+        self.logger = HierarchyLogger(lambda: "Network")
         self.listeners = {}
         if self.async:
             self.select_args = [0]
-        self.outstanding_connects = Queue.Queue()
+        self.outstanding_connects = queue.Queue()
 
     def connect(self, address):
         sock = socket.socket()
@@ -193,11 +193,11 @@ class Network(async.EventThread):
             listener.run()
             return listener
         else:
-            raise Exception(u"Already listening on port %s!" % port)
+            raise Exception("Already listening on port %s!" % port)
 
     def stop_listening(self, port=None):
         if port is None:
-            for port_, listener in self.listeners.items():
+            for port_, listener in list(self.listeners.items()):
                 listener.stop()
                 del self.listeners[port_]
         else:
@@ -209,7 +209,7 @@ class Network(async.EventThread):
         self.processor.register(Network.DO_CONNECT, self.outstanding_connects)
 
     def step(self):
-        read_list, write_list, x_list = select.select(self.clients.keys(), self.clients.keys(), self.empty, *self.select_args)
+        read_list, write_list, x_list = select.select(list(self.clients.keys()), list(self.clients.keys()), self.empty, *self.select_args)
         for sock in read_list:
             self.clients[sock].incoming.put(sock.recv(65536))
 
@@ -220,7 +220,7 @@ class Network(async.EventThread):
                 try:
                     data = self.clients[sock].outgoing.get_nowait()
                     self.outstanding_writes[sock] = data
-                except Queue.Empty:
+                except queue.Empty:
                     pass
             else:
                 data = self.outstanding_writes[sock]
@@ -235,7 +235,7 @@ class Network(async.EventThread):
 
         listeners_done = True
         if self.async and self.listeners:
-            for listener in self.listeners.values():
+            for listener in list(self.listeners.values()):
                 if not listener.step():
                     listeners_done = False
 
@@ -251,7 +251,7 @@ class Network(async.EventThread):
                     self.processor.signal(Network.FAILED_DO_CONNECT, address)
                 else:
                     raise
-        except Queue.Empty:
+        except queue.Empty:
             pass
 
         if listeners_done and not read_list and not sent_data and not did_connect:

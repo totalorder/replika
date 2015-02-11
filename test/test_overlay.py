@@ -2,7 +2,7 @@
 import async
 import net
 import overlay
-from mock import Mock, ANY, patch, call
+from unittest.mock import Mock, ANY, patch, call
 from test.testutils import get_spy_processor
 
 
@@ -94,5 +94,5 @@ class TestIntegration:
     def test_connect(self):
         self.overlay_1.add_peer(("127.0.0.1", 8002))
         self.loop.run_until_done()
-        assert self.overlay_2.peers.keys() == ["1"]
-        assert self.overlay_1.peers.keys() == ["2"]
+        assert list(self.overlay_2.peers.keys()) == [b"1"]
+        assert list(self.overlay_1.peers.keys()) == [b"2"]
