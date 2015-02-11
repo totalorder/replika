@@ -1,6 +1,7 @@
 # encoding: utf-8
 import queue
 import threading
+from util import Sentinel
 
 
 class EventThread(threading.Thread):
@@ -32,7 +33,7 @@ class EventThread(threading.Thread):
         for action in self.async_actions[:]:
             try:
                 action.get()
-            except action.NotAvailable:
+            except action.Exhausted:
                 self.async_actions.remove(action)
                 actions_completed = True
         return not actions_completed
@@ -79,8 +80,11 @@ class Loop:
             self.runners.put(runner)
 
 
-class F:
+class P:
     class NotAvailable(Exception):
+        pass
+
+    class Exhausted(Exception):
         pass
 
     def __init__(self, generator):
@@ -91,12 +95,60 @@ class F:
             try:
                 return next(self.generator)
             except StopIteration:
-                raise F.NotAvailable()
+                raise self.Exhausted()
         else:
             try:
                 return list(self.generator).pop()
             except IndexError:
-                raise F.NotAvailable()
+                raise self.Exhausted()
 
     def run(self):
         list(self.generator)
+
+
+class F(P):
+    NOT_AVAILABLE = Sentinel('F.NOT_AVAILABLE')
+
+    def __init__(self, generator):
+        super().__init__(generator)
+        self.no_result = object()
+        self.result = self.no_result
+
+    def get(self, blocking=False):
+        if self.result is not self.no_result:
+            return self.result
+
+        if not blocking:
+            try:
+                print("Generator: ", self.generator)
+                result = next(self.generator)
+                if result is self.NOT_AVAILABLE:
+                    raise self.NotAvailable()
+                else:
+                    self.result = result
+                    return result
+            except StopIteration:
+                raise F.Exhausted()
+        else:
+            try:
+                return list(self.generator).pop()
+            except IndexError:
+                raise F.Exhausted()
+
+    def run(self):
+        list(self.generator)
+
+
+class AsyncExecution:
+    def __init__(self):
+        self.runner = self.run()
+
+    def step(self):
+        try:
+            next(self.runner)
+            return False
+        except StopIteration:
+            return True
+
+    def run(self):
+        raise NotImplementedError

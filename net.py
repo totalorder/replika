@@ -4,6 +4,7 @@ import select
 import queue
 import struct
 import async
+from async import F
 import signals
 from util import HierarchyLogger
 import errno
@@ -90,8 +91,8 @@ class Client(object):
             async_bytes = self.recvbytes(4)
             bytes = None
             for result in async_bytes:
-                if result is None:
-                    yield
+                if result is F.NOT_AVAILABLE:
+                    yield F.NOT_AVAILABLE
                 else:
                     bytes = result
                     break
@@ -102,7 +103,6 @@ class Client(object):
                 yield result
 
         return async_recvmessage()
-
 
     def recvbytes(self, num):
         def async_recvbytes():
@@ -124,7 +124,7 @@ class Client(object):
                         break
                     except Client.NoDataReceived:
                         self.outstanding_received_data = ''.join(chunks)
-                        yield
+                        yield F.NOT_AVAILABLE
                 #print "Recv: ", chunk
                 chunks.append(chunk)
                 bytes_recd += len(chunk)

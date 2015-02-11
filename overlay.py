@@ -1,7 +1,7 @@
 # encoding: utf-8
 import queue
 import async
-from async import F
+from async import F, P
 import net
 
 
@@ -46,7 +46,7 @@ class Overlay(async.EventThread):
                 print(self.id, client.id, "out?")
 
                 for async_result in client.recvmessage():
-                    if async_result is not None:
+                    if async_result is not F.NOT_AVAILABLE:
                         client.id = async_result
                         print(self.id, client.id, "out!")
                     else:
@@ -77,7 +77,7 @@ class Overlay(async.EventThread):
             else:
                 self.peers[client.id] = client
 
-        return F(async_accept_client())
+        return P(async_accept_client())
 
     def teardown(self):
         self.processor.unregister(net.Network.FAILED_DO_CONNECT, self.failed_connects)

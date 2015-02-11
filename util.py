@@ -38,3 +38,11 @@ class HierarchyLogger(object):
     def debug(self, logstr, *args, **kwargs):
         if self.is_on():
             logging.debug(self.prefix() + ": " + logstr, *args, **kwargs)
+
+
+class Sentinel:
+    def __init__(self, name):
+        self.name = name
+
+    def __repr__(self):
+        return "{} ({})".format(self.name, id(self))

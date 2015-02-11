@@ -1,6 +1,7 @@
 # encoding: utf-8
 import queue
 import socket
+from async import F
 from unittest.mock import Mock, ANY, patch, call
 import async
 import net
@@ -158,9 +159,38 @@ class TestClient:
 
     def test_transfer_message_async(self):
         async_message = self.receiver.recvmessage()
-        assert next(async_message) == None
+        assert next(async_message) == F.NOT_AVAILABLE
         self.sender.sendmessage(b"Hello bytes!")
         assert next(async_message) == b"Hello bytes!"
+
+    def test_conversation_with_delay(self):
+        test_client = self
+        result = []
+
+        class Sender(async.AsyncExecution):
+            def run(self):
+                yield test_client.sender.sendmessage(b"Hello!")
+
+        class Receiver(async.AsyncExecution):
+            def run(self):
+                async_message = test_client.receiver.recvmessage()
+                message = None
+                while 1:
+                    message = next(async_message)
+                    if message is F.NOT_AVAILABLE:
+                        yield
+                    else:
+                        break
+
+                result.append(message)
+
+        loop = async.Loop()
+        loop.add_runner(Receiver())
+        loop.add_runner(Sender())
+        loop.run_until_done()
+
+        assert result == [b"Hello!"]
+
 
 class TestIntegration:
     def setup_method(self, method):

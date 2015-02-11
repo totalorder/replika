@@ -2,7 +2,7 @@
 import queue
 from unittest.mock import Mock
 import async
-from async import F
+from async import P
 
 
 class FakeRunner(async.EventThread):
@@ -16,6 +16,7 @@ class FakeRunner(async.EventThread):
         self.runs -= 1
         if self.runs <= 0:
             return True
+
 
 class TestLoop:
     def test_run_until_done_single(self):
@@ -50,7 +51,7 @@ class TestEventThread:
             return
 
         event_thread = async.EventThread()
-        event_thread.add_async(F(async_action()))
+        event_thread.add_async(P(async_action()))
         event_thread.execute_asyncs()
         assert results == [1]
         event_thread.execute_asyncs()
