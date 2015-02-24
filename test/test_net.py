@@ -13,10 +13,30 @@ import asyncio.base_events
 import asyncio.tasks
 from test import testutils
 
+def create_start_server_side_effect(loop):
+    outer_loop = loop
+    @asyncio.coroutine
+    def start_server_side_effect(client_connected_cb, host=None, port=None, *,
+                                 loop=None, limit=None, **kwds):
+        def client_connected_event():
+            client_connected_cb(Mock(spec=asyncio.streams.StreamReader),
+                                Mock(spec=asyncio.streams.StreamWriter))
+        outer_loop.call_soon(client_connected_event)
+        return Mock(spec=asyncio.base_events.Server)
+    return start_server_side_effect
+
 class TestNetwork:
     def setup_method(self, method):
-        self.select_patcher = patch('select.select', lambda x, y, z, *args: ([], [], []))
-        self.select_mock = self.select_patcher.start()
+        self.loop = testutils.TestLoop()
+        asyncio.set_event_loop(self.loop)
+
+        self.asyncio_start_server_patcher = patch(
+            'asyncio.start_server',
+            Mock(spec=asyncio.start_server)
+        )
+
+        self.asyncio_start_server_mock = \
+            self.asyncio_start_server_patcher.start()
 
         self.socket_patcher = patch('socket.socket')
         self.socket_mock = self.socket_patcher.start()
@@ -31,7 +51,8 @@ class TestNetwork:
         self.network.stop()
         self.processor.stop()
         self.socket_patcher.stop()
-        self.select_patcher.stop()
+        self.asyncio_start_server_patcher.stop()
+        self.loop.close()
 
     def test_on_client_accepted_signal_sent(self):
         self.network.on_connection_accepted(net.Listener.CONNECTION_ACCEPTED, (self.sock, ("127.0.0.1", 8000)))
@@ -67,17 +88,11 @@ class TestNetwork:
         assert fake_socket.send.call_args_list == [call(b"Hello bytes!"), call(b" bytes!"), call(b"s!")]
 
     def test_listen(self):
-        self.socket_mock.return_value = self.sock
-        def raise_eagain():
-            error = socket_error()
-            error.errno = errno.EAGAIN
-            raise error
-        accept_side_effects = [lambda: ("127.0.0.1", 8001), raise_eagain]
-        self.sock.accept.side_effect = lambda: accept_side_effects.pop(0)()
         self.network.listen(8000)
-        self.network.step_until_done()
-        assert self.sock.accept.call_count == 2
-        self.processor.signal.assert_called_with(net.Listener.CONNECTION_ACCEPTED, ANY)
+
+        self.loop.run_until_no_events()
+        self.processor.signal.assert_called_with(
+            net.Listener.CONNECTION_ACCEPTED, ANY)
 
     def test_do_connect(self):
         loop = async.Loop()
@@ -107,28 +122,37 @@ class TestNetwork:
 
 class TestListener:
     def setup_method(self, method):
-        self.socket_patcher = patch('socket.socket')
-        self.socket_mock = self.socket_patcher.start()
+        self.loop = testutils.TestLoop()
+        asyncio.set_event_loop(self.loop)
+
+        self.asyncio_start_server_patcher = patch(
+            'asyncio.start_server',
+            Mock(spec=asyncio.start_server)
+        )
+
+        self.asyncio_start_server_mock = \
+            self.asyncio_start_server_patcher.start()
+
+        self.asyncio_start_server_mock.side_effect = \
+            create_start_server_side_effect(self.loop)
 
         self.processor = get_spy_processor()
         self.processor.run()
-        self.sock = Mock(spec=socket.socket)
 
-        self.remote_address = ("80.0.0.1", 1234)
-        self.socket_mock().accept.return_value = (self.sock, self.remote_address)
-
-        self.listener = net.Listener(8000, self.processor, util.HierarchyLogger(lambda: ""), async=True)
+        self.listener = net.Listener(
+            8000, self.processor, util.HierarchyLogger(lambda: ""), async=True)
         self.listener.run()
 
     def teardown_method(self, method):
         self.processor.stop()
         self.listener.stop()
-        self.socket_patcher.stop()
+        self.asyncio_start_server_patcher.stop()
 
     def test_accept_sends_signal(self):
-        self.listener.step()
-        self.processor.signal.assert_called_once_with(net.Listener.CONNECTION_ACCEPTED,
-                                                      (self.sock, self.remote_address))
+        asyncio.async(self.listener.run())
+        self.loop.run_until_no_events()
+        self.processor.signal.assert_called_once_with(
+            net.Listener.CONNECTION_ACCEPTED, (ANY, ANY))
 
 
 class TestClient:

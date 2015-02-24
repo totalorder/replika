@@ -6,6 +6,13 @@ import asyncio
 from util import Sentinel
 
 
+def task(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        return asyncio.async(asyncio.coroutine(func)(*args, **kwargs))
+    return wrapper
+
+
 class EventThread(threading.Thread):
     def __init__(self, async=False, *args, **kwargs):
         super(EventThread, self).__init__(*args, **kwargs)
@@ -13,22 +20,20 @@ class EventThread(threading.Thread):
         self.async = async
         self.async_actions = []
 
+    @task
     def setup(self):
         pass
 
+    @task
     def step(self):
         raise NotImplementedError
 
+    @task
     def teardown(self):
         pass
 
     def stop(self):
-        if self.async:
-            self.teardown()
-        else:
-            self.running = False
-            if self.is_alive:
-                self.join()
+        pass
 
     def execute_asyncs(self):
         actions_completed = False
@@ -43,19 +48,20 @@ class EventThread(threading.Thread):
     def add_async(self, action):
         self.async_actions.append(action)
 
+    @asyncio.coroutine
     def run(self):
-        if self.async:
-            self.setup()
-        else:
-            self.setup()
-            while self.running:
-                self.step()
-            self.teardown()
+        yield from self._loop_until_done(self.setup())
+        yield from self._loop_until_done(self.step())
+        yield from self._loop_until_done(self.teardown())
 
+    @asyncio.coroutine
+    def _loop_until_done(self, fut):
+        while not fut.done():
+            yield from fut
+
+    @asyncio.coroutine
     def step_until_done(self):
-        while 1:
-            if self.step():
-                return
+        yield from self.run()
 
 
 class Loop:
@@ -170,9 +176,3 @@ class AsyncExecution:
 
     def run(self):
         raise NotImplementedError
-
-def task(func):
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        return asyncio.async(asyncio.coroutine(func)(*args, **kwargs))
-    return wrapper

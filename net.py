@@ -3,6 +3,7 @@ import socket
 import select
 import queue
 import struct
+import asyncio
 import async
 import signals
 from util import HierarchyLogger
@@ -20,31 +21,26 @@ class Listener(async.EventThread):
         self.running = False
         self.sock = None
         self.logger = HierarchyLogger(lambda: "Listener", logger)
+        self.server = None
 
+    def client_connected_cb(self, reader, writer):
+        self.logger.info("Accepted connection")
+        self.processor.signal(self.CONNECTION_ACCEPTED, (reader, writer))
+
+    @async.task
     def setup(self):
-        self.sock = socket.socket()
-        if self.async:
-            self.sock.setblocking(False)
-        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.sock.bind(("0.0.0.0", self.port))
-        self.sock.listen(5)
+        self.server = yield from asyncio.start_server(self.client_connected_cb,
+                                                 "0.0.0.0", self.port)
         self.logger.info("Listening to port %s" % self.port)
+        return
 
+    @async.task
     def step(self):
-        try:
-            client_sock, remote_address = self.sock.accept()
-        except socket_error as e:
-            if e.errno == errno.EAGAIN:
-                return True
-            else:
-                raise
+        return
 
-        self.logger.info("Accepted connection from: %s", str(remote_address))
-        self.processor.signal(self.CONNECTION_ACCEPTED, (client_sock, remote_address))
-
+    @async.task
     def teardown(self):
-        self.logger.info("Shut down")
-        self.sock.close()
+        return
 
 
 class Client(object):
