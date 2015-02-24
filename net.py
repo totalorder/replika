@@ -4,7 +4,6 @@ import select
 import queue
 import struct
 import async
-from async import F
 import signals
 from util import HierarchyLogger
 import errno
@@ -82,53 +81,41 @@ class Client(object):
         packed = struct.pack("!" + format, *data)
         self.send(packed)
 
+    @async.task
     def recvdata(self, format):
-        data = next(self.recvbytes(struct.calcsize(format)))
+        data = yield from self.recvbytes(struct.calcsize(format))
         return struct.unpack("!" + format, data)
 
+    @async.task
     def recvmessage(self):
-        def async_recvmessage():
-            async_bytes = self.recvbytes(4)
-            bytes = None
-            for result in async_bytes:
-                if result is F.NOT_AVAILABLE:
-                    yield F.NOT_AVAILABLE
-                else:
-                    bytes = result
-                    break
+        bytes = yield from self.recvbytes(4)
+        num = struct.unpack("!I", bytes)[0]
+        msg = yield from self.recvbytes(num)
+        return msg
 
-            num = struct.unpack("!I", bytes)[0]
-            msg = self.recvbytes(num)
-            for result in msg:
-                yield result
-
-        return async_recvmessage()
-
+    @async.task
     def recvbytes(self, num):
-        def async_recvbytes():
-            chunks = []
-            bytes_recd = 0
-            if self.outstanding_received_data:
-                chunks.append(self.outstanding_received_data)
-                bytes_recd += len(self.outstanding_received_data)
+        chunks = []
+        bytes_recd = 0
+        if self.outstanding_received_data:
+            chunks.append(self.outstanding_received_data)
+            bytes_recd += len(self.outstanding_received_data)
 
+        while 1:
+            if bytes_recd >= num:
+                data = b"".join(chunks)
+                self.outstanding_received_data = data[num:]
+                return data[:num]
             while 1:
-                if bytes_recd >= num:
-                    data = b"".join(chunks)
-                    self.outstanding_received_data = data[num:]
-                    yield data[:num]
-                    return
-                while 1:
-                    try:
-                        chunk = self.recv()
-                        break
-                    except Client.NoDataReceived:
-                        self.outstanding_received_data = ''.join(chunks)
-                        yield F.NOT_AVAILABLE
-                #print "Recv: ", chunk
-                chunks.append(chunk)
-                bytes_recd += len(chunk)
-        return async_recvbytes()
+                try:
+                    chunk = self.recv()
+                    break
+                except Client.NoDataReceived:
+                    self.outstanding_received_data = ''.join(chunks)
+                    yield
+            #print "Recv: ", chunk
+            chunks.append(chunk)
+            bytes_recd += len(chunk)
 
 
 class Network(async.EventThread):

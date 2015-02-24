@@ -7,7 +7,6 @@ from test import testutils
 
 class TestAsyncIO:
     def setup_method(self, method):
-        print("")
         self.loop = testutils.TestLoop()
         self.result = []
         asyncio.set_event_loop(self.loop)

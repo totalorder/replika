@@ -1,7 +1,6 @@
 # encoding: utf-8
 import queue
 import socket
-from async import F
 from unittest.mock import Mock, ANY, patch, call
 import async
 import net
@@ -9,7 +8,10 @@ from test.testutils import get_spy_processor
 import util
 import errno
 from socket import error as socket_error
-
+import asyncio
+import asyncio.base_events
+import asyncio.tasks
+from test import testutils
 
 class TestNetwork:
     def setup_method(self, method):
@@ -131,65 +133,64 @@ class TestListener:
 
 class TestClient:
     def setup_method(self, method):
+        self.loop = testutils.TestLoop()
+        self.result = []
+        asyncio.set_event_loop(self.loop)
+
         self.sender = net.Client(("127.0.0.1", 8000), True)
         self.receiver = net.Client(("127.0.0.1", 8001), False)
         self.sender.outgoing = self.receiver.incoming
 
+    def gfr(self, future):  # get_future_result
+        self.loop.run_until_no_events()
+        return future.result()
+
     def test_recvbytes(self):
         [self.receiver.incoming.put(bytes(c, 'utf-8')) for c in "Hello by"]
         self.receiver.incoming.put(b"tes!")
-        assert next(self.receiver.recvbytes(5)) == b"Hello"
-        assert next(self.receiver.recvbytes(1)) == b" "
-        assert next(self.receiver.recvbytes(3)) == b"byt"
-        assert next(self.receiver.recvbytes(3)) == b"es!"
+        assert self.gfr(self.receiver.recvbytes(5)) == b"Hello"
+        assert self.gfr(self.receiver.recvbytes(1)) == b" "
+        assert self.gfr(self.receiver.recvbytes(3)) == b"byt"
+        assert self.gfr(self.receiver.recvbytes(3)) == b"es!"
 
     def test_transfer_data(self):
         self.sender.senddata("I?", 123456, True)
-        assert self.receiver.recvdata("I?") == (123456, True)
+        assert self.gfr(self.receiver.recvdata("I?")) == (123456, True)
 
     def test_transfer_message(self):
         self.sender.sendmessage(b"Hello bytes!")
-        assert next(self.receiver.recvmessage()) == b"Hello bytes!"
+        assert self.gfr(self.receiver.recvmessage()) == b"Hello bytes!"
 
     def test_recvbytes_async(self):
-        async_bytes = self.receiver.recvbytes(12)
+        bytes_fut = self.receiver.recvbytes(12)
         [self.receiver.incoming.put(bytes(c, 'utf-8')) for c in "Hello by"]
         self.receiver.incoming.put(b"tes!")
-        assert list(async_bytes).pop() == b"Hello bytes!"
+
+        assert self.gfr(bytes_fut) == b"Hello bytes!"
 
     def test_transfer_message_async(self):
-        async_message = self.receiver.recvmessage()
-        assert next(async_message) == F.NOT_AVAILABLE
+        message_fut = self.receiver.recvmessage()
+        self.loop._run_once()  # TODO: Find nicer way to do this
+        assert not message_fut.done()
         self.sender.sendmessage(b"Hello bytes!")
-        assert next(async_message) == b"Hello bytes!"
+        self.loop.run_until_no_events()
+        assert message_fut.result() == b"Hello bytes!"
 
     def test_conversation_with_delay(self):
-        test_client = self
-        result = []
+        @asyncio.coroutine
+        def receiver():
+            message = yield from self.receiver.recvmessage()
+            return message
 
-        class Sender(async.AsyncExecution):
-            def run(self):
-                yield test_client.sender.sendmessage(b"Hello!")
+        @asyncio.coroutine
+        def sender():
+            return self.sender.sendmessage(b"Hello!")
 
-        class Receiver(async.AsyncExecution):
-            def run(self):
-                async_message = test_client.receiver.recvmessage()
-                message = None
-                while 1:
-                    message = next(async_message)
-                    if message is F.NOT_AVAILABLE:
-                        yield
-                    else:
-                        break
+        receiver_fut = asyncio.async(receiver())
+        asyncio.async(sender())
+        self.loop.run_until_no_events()
 
-                result.append(message)
-
-        loop = async.Loop()
-        loop.add_runner(Receiver())
-        loop.add_runner(Sender())
-        loop.run_until_done()
-
-        assert result == [b"Hello!"]
+        assert receiver_fut.result() == b"Hello!"
 
 
 class TestIntegration:

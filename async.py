@@ -1,6 +1,8 @@
 # encoding: utf-8
 import queue
 import threading
+import functools
+import asyncio
 from util import Sentinel
 
 
@@ -152,3 +154,10 @@ class AsyncExecution:
 
     def run(self):
         raise NotImplementedError
+
+def task(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        print(func, args, kwargs)
+        return asyncio.async(asyncio.coroutine(func)(*args, **kwargs))
+    return wrapper
