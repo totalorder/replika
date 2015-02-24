@@ -134,12 +134,14 @@ class TestListener:
 class TestClient:
     def setup_method(self, method):
         self.loop = testutils.TestLoop()
-        self.result = []
         asyncio.set_event_loop(self.loop)
 
         self.sender = net.Client(("127.0.0.1", 8000), True)
         self.receiver = net.Client(("127.0.0.1", 8001), False)
         self.sender.outgoing = self.receiver.incoming
+
+    def teardown_method(self, method):
+        self.loop.close()
 
     def gfr(self, future):  # get_future_result
         self.loop.run_until_no_events()

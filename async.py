@@ -70,16 +70,32 @@ class Loop:
             return
         last_done = None
         while 1:
-            runner = self.runners.get()
-            if runner.step():
-                if last_done is runner:
-                    self.runners.put(runner)
+            finished, last_done = self.step(last_done)
+            if finished:
+                break
+
+    def step(self, last_done=None):
+        runner = self.runners.get()
+        if runner.step():
+            if last_done is runner:
+                self.runners.put(runner)
+                return True, last_done
+            elif last_done is None:
+                last_done = runner
+        else:
+            last_done = None
+        self.runners.put(runner)
+        return False, last_done
+
+    def run_asyncio_until(self, predicate):
+        @asyncio.coroutine
+        def run_loop():
+            while 1:
+                self.step()
+                yield
+                if predicate():
                     return
-                elif last_done is None:
-                    last_done = runner
-            else:
-                last_done = None
-            self.runners.put(runner)
+        asyncio.async(run_loop())
 
 
 class P:
@@ -158,6 +174,5 @@ class AsyncExecution:
 def task(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
-        print(func, args, kwargs)
         return asyncio.async(asyncio.coroutine(func)(*args, **kwargs))
     return wrapper

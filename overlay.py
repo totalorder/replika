@@ -45,18 +45,20 @@ class Overlay(async.EventThread):
                 client.sendmessage(bytes(self.id, 'utf-8'))
                 print(self.id, client.id, "out?")
 
-                for async_result in client.recvmessage():
-                    if async_result is not F.NOT_AVAILABLE:
-                        client.id = async_result
-                        print(self.id, client.id, "out!")
+                message_fut = client.recvmessage()
+                while 1:
+                    if message_fut.done():
+                        client.id = message_fut.result()
+                        break
                     else:
                         yield
 
             else:
-                for async_result in client.recvmessage():
-                    if async_result is not None:
-                        client.id = async_result
-                        print(self.id, client.id, "in")
+                message_fut = client.recvmessage()
+                while 1:
+                    if message_fut.done():
+                        client.id = message_fut.result()
+                        break
                     else:
                         yield
                 client.sendmessage(bytes(self.id, 'utf-8'))

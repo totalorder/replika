@@ -1,12 +1,19 @@
 # encoding: utf-8
+import asyncio
 import async
 import net
 import overlay
 from unittest.mock import Mock, ANY, patch, call
+from test import testutils
 from test.testutils import get_spy_processor
 
 
 class TestOverlay:
+    def fr(self, result):
+        fut = asyncio.Future()
+        fut.set_result(result)
+        return fut
+
     def setup_method(self, method):
         self.network = Mock(spec=net.Network)
         self.processor = get_spy_processor()
@@ -15,20 +22,20 @@ class TestOverlay:
 
         self.outgoing_client_1 = Mock(spec=net.Client)()
         self.outgoing_client_1.is_outgoing = True
-        self.outgoing_client_1.recvmessage.return_value = "2"
+        self.outgoing_client_1.recvmessage.return_value = self.fr("2")
 
         self.incoming_client_1 = Mock(spec=net.Client)()
         self.incoming_client_1.is_outgoing = False
-        self.incoming_client_1.recvmessage.return_value = "2"
+        self.incoming_client_1.recvmessage.return_value = self.fr("2")
 
         self.overlay_2 = overlay.Overlay("2", 8002, self.processor, self.network)
         self.outgoing_client_2 = Mock(spec=net.Client)()
         self.outgoing_client_2.is_outgoing = True
-        self.outgoing_client_2.recvmessage.return_value = "1"
+        self.outgoing_client_2.recvmessage.return_value = self.fr("1")
 
         self.incoming_client_2 = Mock(spec=net.Client)()
         self.incoming_client_2.is_outgoing = False
-        self.incoming_client_2.recvmessage.return_value = "1"
+        self.incoming_client_2.recvmessage.return_value = self.fr("1")
 
     def test_accept_client(self):
         self.overlay_1.accept_client(self.incoming_client_1).run()
@@ -57,6 +64,9 @@ class TestOverlay:
 
 class TestIntegration:
     def setup_method(self, method):
+        self.loopio = testutils.TestLoop()
+        asyncio.set_event_loop(self.loopio)
+
         self.loop = async.Loop()
         self.processor_1 = get_spy_processor()
         self.processor_1.run()
@@ -90,9 +100,13 @@ class TestIntegration:
         self.overlay_1.stop()
         self.network_1.stop()
         self.processor_1.stop()
+        self.loopio.close()
 
     def test_connect(self):
         self.overlay_1.add_peer(("127.0.0.1", 8002))
-        self.loop.run_until_done()
+        self.loop.run_asyncio_until(
+            lambda: self.overlay_1.peers.keys() and self.overlay_2.peers.keys()
+        )
+        self.loopio.run_until_no_events()
         assert list(self.overlay_2.peers.keys()) == [b"1"]
         assert list(self.overlay_1.peers.keys()) == [b"2"]
