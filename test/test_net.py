@@ -1,11 +1,7 @@
 # encoding: utf-8
-import queue
 from unittest.mock import Mock, ANY, patch
 import pytest
-import async
 import net
-from test.testutils import get_spy_processor
-import util
 import asyncio
 import asyncio.base_events
 import asyncio.tasks
@@ -14,15 +10,19 @@ from test.testutils import create_future_result as cfr
 from test.testutils import get_future_result as gfr
 
 
-def create_start_server_side_effect(loop):
+def create_start_server_side_effect(loop=None):
+    if loop is None:
+        loop = asyncio.get_event_loop()
     # loop is shadowed in the inner function
     outer_loop = loop
     @asyncio.coroutine
     def start_server_side_effect(client_connected_cb, host=None, port=None, *,
                                  loop=None, limit=None, **kwds):
         def client_connected_event():
+            stream_writer_mock = Mock(spec=asyncio.streams.StreamWriter)
+            stream_writer_mock.transport.get_extra_info.return_value = ('127.0.0.1', 8001)
             client_connected_cb(Mock(spec=asyncio.streams.StreamReader),
-                                Mock(spec=asyncio.streams.StreamWriter))
+                                stream_writer_mock)
         outer_loop.call_soon(client_connected_event)
         return Mock(spec=asyncio.base_events.Server)
     return start_server_side_effect
@@ -40,11 +40,14 @@ def create_open_connection_side_effect(loop, reader_mock=None, fail=False):
         if fail:
             raise ConnectionRefusedError()
 
+        writer_mock = Mock(spec=asyncio.streams.StreamWriter)
+        writer_mock.transport.get_extra_info.return_value = (host, port)
+
         if outer_reader_mock is None:
             reader_mock = Mock(spec=asyncio.streams.StreamReader)
         else:
             reader_mock = outer_reader_mock
-        return cfr((reader_mock, Mock(spec=asyncio.streams.StreamWriter)))
+        return cfr((reader_mock, writer_mock))
     return open_connection_side_effect
 
 
@@ -72,27 +75,32 @@ class TestNetwork:
         self.asyncio_open_connection_mock = \
             self.asyncio_open_connection_patcher.start()
 
-        self.processor = get_spy_processor()
-        self.processor.run()
-        self.network = net.Network(self.processor, async=True)
-        self.network.step_until_done()
+        self.network = net.Network(self.client_accepted_cb)
+        self._client_accepted_cb = lambda *args, **kwargs: None
+
+    def set_client_accepted_cb(self, cb):
+        self._client_accepted_cb = cb
+
+    def client_accepted_cb(self, *args, **kwargs):
+        self._client_accepted_cb(*args, **kwargs)
 
     def teardown_method(self, method):
-        self.processor.stop()
         self.asyncio_start_server_patcher.stop()
         self.asyncio_open_connection_patcher.stop()
         self.loop.close()
 
-    def test_on_client_accepted_signal_sent(self):
-        self.network.on_connection_accepted(net.Listener.CONNECTION_ACCEPTED, (None, ("127.0.0.1", 8000)))
-        self.processor.signal.assert_called_once_with(net.Network.CLIENT_ACCEPTED, ANY)
+    def test_client_accepted_cb_called_on_listen(self):
+        self.asyncio_start_server_mock.side_effect = create_start_server_side_effect()
 
-    def test_on_connection_accepted_signal_sent(self):
-        self.processor.signal(net.Listener.CONNECTION_ACCEPTED, ("fake_socket", ("127.0.0.1", 8000)))
-        self.network.step_until_done()
-        self.processor.step_until_done()
+        self.called = []
+        self.set_client_accepted_cb(lambda *args, **kwargs: self.called.append((args, kwargs)))
+        self.network.listen(("127.0.0.1", 8000))
         self.loop.run_until_no_events()
-        self.processor.signal.assert_called_with(net.Network.CLIENT_ACCEPTED, ANY)
+        assert len(self.called) == 1
+        args, kwargs = self.called[0]
+        assert len(args) == 1
+        client = args[0]
+        assert client.address == ("127.0.0.1", 8001)
 
     def test_recv_data(self):
         reader_mock = Mock(spec=asyncio.streams.StreamReader)
@@ -101,58 +109,19 @@ class TestNetwork:
         client = gfr(self.network.connect(("127.0.0.1", 8000)))
         assert gfr(client.recv()) == b"Hello bytes!"
 
-    def test_listen(self):
-        self.network.listen(8000)
-
-        self.loop.run_until_no_events()
-        self.processor.signal.assert_called_with(
-            net.Listener.CONNECTION_ACCEPTED, ANY)
-
     def test_connect(self):
         self.asyncio_open_connection_mock.side_effect = create_open_connection_side_effect(self.loop)
-        client_fut = self.network.connect(("127.0.0.1", 8000))
+        client_fut = self.network.connect(("127.0.0.1", 8001))
         self.loop.run_until_no_events()
         assert client_fut.done()
+        assert client_fut.result().address == ("127.0.0.1", 8001)
 
     def test_failed_connect(self):
         self.asyncio_open_connection_mock.side_effect = create_open_connection_side_effect(self.loop, fail=True)
-        client_fut = self.network.connect(("127.0.0.1", 8000))
+        client_fut = self.network.connect(("127.0.0.1", 8001))
         self.loop.run_until_no_events(raise_exceptions=False)
         with pytest.raises(ConnectionError) as excinfo:
             client_fut.result()
-
-class TestListener:
-    def setup_method(self, method):
-        self.loop = testutils.TestLoop()
-        asyncio.set_event_loop(self.loop)
-
-        self.asyncio_start_server_patcher = patch(
-            'asyncio.start_server',
-            Mock(spec=asyncio.start_server)
-        )
-
-        self.asyncio_start_server_mock = \
-            self.asyncio_start_server_patcher.start()
-
-        self.asyncio_start_server_mock.side_effect = \
-            create_start_server_side_effect(self.loop)
-
-        self.processor = get_spy_processor()
-        self.processor.run()
-
-        self.listener = net.Listener(
-            8000, self.processor, util.HierarchyLogger(lambda: ""), async=True)
-        self.listener.step_until_done()
-
-    def teardown_method(self, method):
-        self.processor.stop()
-        self.listener.stop()
-        self.asyncio_start_server_patcher.stop()
-
-    def test_accept_sends_signal(self):
-        self.loop.run_until_no_events()
-        self.processor.signal.assert_called_once_with(
-            net.Listener.CONNECTION_ACCEPTED, (ANY, ANY))
 
 
 class TestClient:
@@ -230,28 +199,17 @@ class TestIntegration:
         self.loop = testutils.TestLoop()
         asyncio.set_event_loop(self.loop)
 
-        self.procloop = async.Loop()
-
-        self.sending_processor = get_spy_processor()
-        self.sending_processor.run()
-        self.procloop.add_runner(self.sending_processor)
-
-        self.sending_network = net.Network(self.sending_processor, async=True)
-        self.sending_network.step_until_done()
-
-        self.receiving_processor = get_spy_processor()
-        self.receiving_processor.run()
-        self.procloop.add_runner(self.receiving_processor)
-
-        self.receiving_network = net.Network(self.receiving_processor, async=True)
-        self.receiving_network.step_until_done()
+        self.sending_network = net.Network(None)
+        self.receiving_network = net.Network(self.receiving_client_accepted_cb)
+        self.receiving_client = None
 
     def teardown_method(self, method):
         self.receiving_network.stop()
-        self.receiving_processor.stop()
         self.sending_network.stop()
-        self.sending_processor.stop()
         self.loop.stop()
+
+    def receiving_client_accepted_cb(self, client):
+        self.receiving_client = client
 
     def test_establish_connection(self):
         listen_fut = self.receiving_network.listen(8000)
@@ -261,14 +219,10 @@ class TestIntegration:
         sending_client_fut = self.sending_network.connect(("127.0.0.1", 8000))
         self.loop.run_until_complete(sending_client_fut)
         assert sending_client_fut.done()
-        self.receiving_network.stop_listening()
-        self.procloop.run_until_done()
-        self.receiving_processor.signal.assert_called_with(net.Network.CLIENT_ACCEPTED, ANY)
+        assert sending_client_fut.result().address == ("127.0.0.1", 8000)
+        assert self.receiving_client.address == ("127.0.0.1", ANY)
 
     def test_send_and_receive_data(self):
-        receiving_accepted_clients = queue.Queue()
-        self.receiving_processor.register(net.Network.CLIENT_ACCEPTED, receiving_accepted_clients)
-
         listen_fut = self.receiving_network.listen(8000)
         self.loop.run_until_complete(listen_fut, raise_exceptions=False)
         listen_fut.result()
@@ -277,19 +231,15 @@ class TestIntegration:
         self.loop.run_until_complete(sending_client_fut)
         assert sending_client_fut.done()
         sending_client = sending_client_fut.result()
+        assert sending_client.address == ("127.0.0.1", 8000)
+        assert self.receiving_client.address == ("127.0.0.1", ANY)
+
         sending_client.send(b"Hello bytes!")
-
-        self.receiving_network.stop_listening()
-        self.procloop.run_until_done()
-        self.receiving_processor.signal.assert_called_with(net.Network.CLIENT_ACCEPTED, ANY)
-
-        signal_code, receiving_client = receiving_accepted_clients.get_nowait()
-        assert signal_code == net.Network.CLIENT_ACCEPTED
-        receiving_recv_fut = receiving_client.recv()
+        receiving_recv_fut = self.receiving_client.recv()
         self.loop.run_until_complete(receiving_recv_fut)
         assert receiving_recv_fut.result() == b"Hello bytes!"
 
-        receiving_client.send(b"Hello! I got your message!")
+        self.receiving_client.send(b"Hello! I got your message!")
 
         sending_client_recv_fut = sending_client.recv()
         self.loop.run_until_complete(sending_client_recv_fut)
