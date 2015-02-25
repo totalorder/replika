@@ -42,19 +42,21 @@ class Listener(async.EventThread):
     def teardown(self):
         return
 
+    def stop(self):
+        if self.server:
+            self.server.close()
+
 
 class Client(object):
     class NoDataReceived(Exception):
         pass
 
-    def __init__(self, address, is_outgoing, async=True):
+    def __init__(self, address, reader, writer, is_outgoing):
         self.async = async
         self.address = address
+        self.reader = reader
+        self.writer = writer
         self.is_outgoing = is_outgoing
-        self.incoming = queue.Queue()
-        self.outgoing = queue.Queue()
-        self.incoming_get = self.incoming.get_nowait if self.async else self.incoming.get
-        self.outstanding_received_data = ""
         self.id = None
 
     def __repr__(self):
@@ -62,13 +64,12 @@ class Client(object):
 
     def send(self, data):
         print("Send:", data)
-        self.outgoing.put(data)
+        self.writer.write(data)
 
+    @async.task
     def recv(self):
-        try:
-            return self.incoming_get()
-        except queue.Empty:
-            raise Client.NoDataReceived
+        data = yield from self.reader.read(1024)
+        return data
 
     def sendmessage(self, msg):
         self.send(struct.pack("!I", len(msg)) + msg)
@@ -91,27 +92,8 @@ class Client(object):
 
     @async.task
     def recvbytes(self, num):
-        chunks = []
-        bytes_recd = 0
-        if self.outstanding_received_data:
-            chunks.append(self.outstanding_received_data)
-            bytes_recd += len(self.outstanding_received_data)
-
-        while 1:
-            if bytes_recd >= num:
-                data = b"".join(chunks)
-                self.outstanding_received_data = data[num:]
-                return data[:num]
-            while 1:
-                try:
-                    chunk = self.recv()
-                    break
-                except Client.NoDataReceived:
-                    self.outstanding_received_data = ''.join(chunks)
-                    yield
-            #print "Recv: ", chunk
-            chunks.append(chunk)
-            bytes_recd += len(chunk)
+        data = yield from self.reader.readexactly(num)
+        return data
 
 
 class Network(async.EventThread):
@@ -132,12 +114,12 @@ class Network(async.EventThread):
             self.select_args = [0]
         self.outstanding_connects = queue.Queue()
 
+    @async.task
     def connect(self, address):
-        sock = socket.socket()
-        sock.connect(address)
+        reader, writer = yield from asyncio.open_connection(*address)
 
-        client = Client(address, True)
-        self.clients[sock] = client
+        client = Client(address, reader, writer, True)
+        self.clients[(reader, writer)] = client
         return client
 
     def disconnect_client(self, client):
@@ -149,17 +131,16 @@ class Network(async.EventThread):
         raise Exception("Client %s not connected!")
 
     def on_connection_accepted(self, signal_code, data):
-        sock, sender_address = data
-        client = Client(sender_address, False)
-        self.clients[sock] = client
+        reader, writer = data
+        client = Client(None, reader, writer, False)
+        self.clients[((reader, writer))] = client
         self.processor.signal(self.CLIENT_ACCEPTED, client)
 
     def listen(self, port, async=True):
         if port not in self.listeners:
             listener = Listener(port, self.processor, self.logger, async=async)
             self.listeners[port] = listener
-            listener.run()
-            return listener
+            return listener.step_until_done()
         else:
             raise Exception("Already listening on port %s!" % port)
 
@@ -172,11 +153,24 @@ class Network(async.EventThread):
             self.listeners[port].stop()
             del self.listeners[port]
 
+    def stop(self):
+        self.stop_listening()
+        self.processor.unregister(Listener.CONNECTION_ACCEPTED, self.on_connection_accepted)
+        self.processor.unregister(Network.DO_CONNECT, self.on_do_connect)
+
+    def on_do_connect(self, signal_code, address):
+        client_fut = self.connect(address)
+        client_fut.add_done_callback(lambda client: self.processor.signal(self.CLIENT_ACCEPTED, client.result()))
+
+    @async.task
     def setup(self):
         self.processor.register(Listener.CONNECTION_ACCEPTED, self.on_connection_accepted)
-        self.processor.register(Network.DO_CONNECT, self.outstanding_connects)
+        self.processor.register(Network.DO_CONNECT, self.on_do_connect)
+        return
 
+    @async.task
     def step(self):
+        return
         read_list, write_list, x_list = select.select(list(self.clients.keys()), list(self.clients.keys()), self.empty, *self.select_args)
         for sock in read_list:
             self.clients[sock].incoming.put(sock.recv(65536))
@@ -225,10 +219,9 @@ class Network(async.EventThread):
         if listeners_done and not read_list and not sent_data and not did_connect:
             return True
 
+    @async.task
     def teardown(self):
-        self.stop_listening()
-        self.processor.unregister(Listener.CONNECTION_ACCEPTED, self.on_connection_accepted)
-        self.processor.unregister(Network.DO_CONNECT, self.outstanding_connects)
+        return
 
 
 

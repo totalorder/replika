@@ -19,7 +19,7 @@ class Overlay(async.EventThread):
     def setup(self):
         self.processor.register(net.Network.CLIENT_ACCEPTED, self.accepted_clients)
         self.processor.register(net.Network.FAILED_DO_CONNECT, self.failed_connects)
-        self.network.listen(self.port, async=True)
+        self.network.listen(self.port)
 
     def step(self):
         accepted_client = False

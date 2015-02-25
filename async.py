@@ -59,9 +59,8 @@ class EventThread(threading.Thread):
         while not fut.done():
             yield from fut
 
-    @asyncio.coroutine
     def step_until_done(self):
-        yield from self.run()
+        return asyncio.async(self.run())
 
 
 class Loop:
@@ -101,7 +100,7 @@ class Loop:
                 yield
                 if predicate():
                     return
-        asyncio.async(run_loop())
+        return asyncio.async(run_loop())
 
 
 class P:

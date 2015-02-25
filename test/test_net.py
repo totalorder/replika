@@ -1,19 +1,21 @@
 # encoding: utf-8
 import queue
-import socket
-from unittest.mock import Mock, ANY, patch, call
+from unittest.mock import Mock, ANY, patch
+import pytest
 import async
 import net
 from test.testutils import get_spy_processor
 import util
-import errno
-from socket import error as socket_error
 import asyncio
 import asyncio.base_events
 import asyncio.tasks
 from test import testutils
+from test.testutils import create_future_result as cfr
+from test.testutils import get_future_result as gfr
+
 
 def create_start_server_side_effect(loop):
+    # loop is shadowed in the inner function
     outer_loop = loop
     @asyncio.coroutine
     def start_server_side_effect(client_connected_cb, host=None, port=None, *,
@@ -24,6 +26,27 @@ def create_start_server_side_effect(loop):
         outer_loop.call_soon(client_connected_event)
         return Mock(spec=asyncio.base_events.Server)
     return start_server_side_effect
+
+
+def create_open_connection_side_effect(loop, reader_mock=None, fail=False):
+    # loop is shadowed in the inner function
+    outer_loop = loop
+    # reader_mock cannot be written to from the inner function scope
+    # read outer_reader_mock and write to shadowed reader_mock
+    outer_reader_mock = reader_mock
+    @asyncio.coroutine
+    def open_connection_side_effect(host=None, port=None, *,
+                                 loop=None, limit=None, **kwds):
+        if fail:
+            raise ConnectionRefusedError()
+
+        if outer_reader_mock is None:
+            reader_mock = Mock(spec=asyncio.streams.StreamReader)
+        else:
+            reader_mock = outer_reader_mock
+        return cfr((reader_mock, Mock(spec=asyncio.streams.StreamWriter)))
+    return open_connection_side_effect
+
 
 class TestNetwork:
     def setup_method(self, method):
@@ -38,54 +61,45 @@ class TestNetwork:
         self.asyncio_start_server_mock = \
             self.asyncio_start_server_patcher.start()
 
-        self.socket_patcher = patch('socket.socket')
-        self.socket_mock = self.socket_patcher.start()
+        self.asyncio_start_server_mock.side_effect = \
+            create_start_server_side_effect(self.loop)
+
+        self.asyncio_open_connection_patcher = patch(
+            'asyncio.open_connection',
+            Mock(spec=asyncio.open_connection)
+        )
+
+        self.asyncio_open_connection_mock = \
+            self.asyncio_open_connection_patcher.start()
 
         self.processor = get_spy_processor()
         self.processor.run()
         self.network = net.Network(self.processor, async=True)
-        self.sock = Mock(spec=socket.socket)()
-        self.network.run()
+        self.network.step_until_done()
 
     def teardown_method(self, method):
-        self.network.stop()
         self.processor.stop()
-        self.socket_patcher.stop()
         self.asyncio_start_server_patcher.stop()
+        self.asyncio_open_connection_patcher.stop()
         self.loop.close()
 
     def test_on_client_accepted_signal_sent(self):
-        self.network.on_connection_accepted(net.Listener.CONNECTION_ACCEPTED, (self.sock, ("127.0.0.1", 8000)))
+        self.network.on_connection_accepted(net.Listener.CONNECTION_ACCEPTED, (None, ("127.0.0.1", 8000)))
         self.processor.signal.assert_called_once_with(net.Network.CLIENT_ACCEPTED, ANY)
 
     def test_on_connection_accepted_signal_sent(self):
-        self.processor.signal(net.Listener.CONNECTION_ACCEPTED, (self.sock, ("127.0.0.1", 8000)))
+        self.processor.signal(net.Listener.CONNECTION_ACCEPTED, ("fake_socket", ("127.0.0.1", 8000)))
         self.network.step_until_done()
         self.processor.step_until_done()
+        self.loop.run_until_no_events()
         self.processor.signal.assert_called_with(net.Network.CLIENT_ACCEPTED, ANY)
 
     def test_recv_data(self):
-        fake_socket = self.socket_mock()
-        fake_socket.recv.return_value = b"Hello bytes!"
-        client = self.network.connect(fake_socket)
-        select_return_values = [([fake_socket], [], []), ([], [], [])]
-        with patch('select.select', lambda x, y, z, *args: select_return_values.pop(0)):
-            self.network.step_until_done()
-        assert client.recv() == b"Hello bytes!"
-
-    def test_send_data(self):
-        fake_socket = self.socket_mock()
-        fake_socket_send_return_values = [5, 5, 2, 0, 0]
-        fake_socket.send.side_effect = lambda x: fake_socket_send_return_values.pop(0)
-
-        client = self.network.connect(fake_socket)
-        client.send(b"Hello bytes!")
-        select_return_values = [([], [fake_socket], []), ([], [fake_socket], []),
-                                ([], [fake_socket], []), ([], [fake_socket], []),
-                                ([], [fake_socket], []), ([], [], [])]
-        with patch('select.select', lambda x, y, z, *args: select_return_values.pop(0)):
-            self.network.step_until_done()
-        assert fake_socket.send.call_args_list == [call(b"Hello bytes!"), call(b" bytes!"), call(b"s!")]
+        reader_mock = Mock(spec=asyncio.streams.StreamReader)
+        self.asyncio_open_connection_mock.side_effect = create_open_connection_side_effect(self.loop, reader_mock)
+        reader_mock.read.return_value = cfr(b"Hello bytes!")
+        client = gfr(self.network.connect(("127.0.0.1", 8000)))
+        assert gfr(client.recv()) == b"Hello bytes!"
 
     def test_listen(self):
         self.network.listen(8000)
@@ -94,31 +108,18 @@ class TestNetwork:
         self.processor.signal.assert_called_with(
             net.Listener.CONNECTION_ACCEPTED, ANY)
 
-    def test_do_connect(self):
-        loop = async.Loop()
-        loop.add_runner(self.processor)
-        loop.add_runner(self.network)
-
-        self.processor.signal(net.Network.DO_CONNECT, ("127.0.0.1", 8000))
-        loop.run_until_done()
-
-        self.processor.signal.assert_called_with(net.Network.CLIENT_ACCEPTED, ANY)
+    def test_connect(self):
+        self.asyncio_open_connection_mock.side_effect = create_open_connection_side_effect(self.loop)
+        client_fut = self.network.connect(("127.0.0.1", 8000))
+        self.loop.run_until_no_events()
+        assert client_fut.done()
 
     def test_failed_connect(self):
-        fake_socket = self.socket_mock()
-        def raise_refused(address):
-            error = socket_error()
-            error.errno = errno.ECONNREFUSED
-            raise error
-        fake_socket.connect.side_effect = raise_refused
-
-        loop = async.Loop()
-        loop.add_runner(self.processor)
-        loop.add_runner(self.network)
-        self.processor.signal(net.Network.DO_CONNECT, ("127.0.0.1", 8000))
-        loop.run_until_done()
-        self.processor.signal.assert_called_with(net.Network.FAILED_DO_CONNECT, ("127.0.0.1", 8000))
-
+        self.asyncio_open_connection_mock.side_effect = create_open_connection_side_effect(self.loop, fail=True)
+        client_fut = self.network.connect(("127.0.0.1", 8000))
+        self.loop.run_until_no_events(raise_exceptions=False)
+        with pytest.raises(ConnectionError) as excinfo:
+            client_fut.result()
 
 class TestListener:
     def setup_method(self, method):
@@ -141,7 +142,7 @@ class TestListener:
 
         self.listener = net.Listener(
             8000, self.processor, util.HierarchyLogger(lambda: ""), async=True)
-        self.listener.run()
+        self.listener.step_until_done()
 
     def teardown_method(self, method):
         self.processor.stop()
@@ -149,7 +150,6 @@ class TestListener:
         self.asyncio_start_server_patcher.stop()
 
     def test_accept_sends_signal(self):
-        asyncio.async(self.listener.run())
         self.loop.run_until_no_events()
         self.processor.signal.assert_called_once_with(
             net.Listener.CONNECTION_ACCEPTED, (ANY, ANY))
@@ -159,40 +159,46 @@ class TestClient:
     def setup_method(self, method):
         self.loop = testutils.TestLoop()
         asyncio.set_event_loop(self.loop)
+        sender_writer_transport_mock = Mock(spec=asyncio.transports.WriteTransport)
+        self.sender = net.Client(("127.0.0.1", 8000),
+                                 asyncio.streams.StreamReader(),
+                                 asyncio.streams.StreamWriter(
+                                     sender_writer_transport_mock, None, None, None),
+                                 True)
 
-        self.sender = net.Client(("127.0.0.1", 8000), True)
-        self.receiver = net.Client(("127.0.0.1", 8001), False)
-        self.sender.outgoing = self.receiver.incoming
+        receiver_stream_reader = asyncio.streams.StreamReader()
+        self.receiver = net.Client(("127.0.0.1", 8001),
+                                   receiver_stream_reader,
+                                   asyncio.streams.StreamWriter(
+                                       Mock(spec=asyncio.transports.WriteTransport), None, None, None),
+                                   False)
+
+        sender_writer_transport_mock.write.side_effect = lambda data: receiver_stream_reader.feed_data(data)
 
     def teardown_method(self, method):
         self.loop.close()
 
-    def gfr(self, future):  # get_future_result
-        self.loop.run_until_no_events()
-        return future.result()
-
     def test_recvbytes(self):
-        [self.receiver.incoming.put(bytes(c, 'utf-8')) for c in "Hello by"]
-        self.receiver.incoming.put(b"tes!")
-        assert self.gfr(self.receiver.recvbytes(5)) == b"Hello"
-        assert self.gfr(self.receiver.recvbytes(1)) == b" "
-        assert self.gfr(self.receiver.recvbytes(3)) == b"byt"
-        assert self.gfr(self.receiver.recvbytes(3)) == b"es!"
+        self.receiver.reader.feed_data(b"Hello bytes!")
+        assert gfr(self.receiver.recvbytes(5)) == b"Hello"
+        assert gfr(self.receiver.recvbytes(1)) == b" "
+        assert gfr(self.receiver.recvbytes(3)) == b"byt"
+        assert gfr(self.receiver.recvbytes(3)) == b"es!"
 
     def test_transfer_data(self):
         self.sender.senddata("I?", 123456, True)
-        assert self.gfr(self.receiver.recvdata("I?")) == (123456, True)
+        assert gfr(self.receiver.recvdata("I?")) == (123456, True)
 
     def test_transfer_message(self):
         self.sender.sendmessage(b"Hello bytes!")
-        assert self.gfr(self.receiver.recvmessage()) == b"Hello bytes!"
+        assert gfr(self.receiver.recvmessage()) == b"Hello bytes!"
 
     def test_recvbytes_async(self):
         bytes_fut = self.receiver.recvbytes(12)
-        [self.receiver.incoming.put(bytes(c, 'utf-8')) for c in "Hello by"]
-        self.receiver.incoming.put(b"tes!")
+        [self.receiver.reader.feed_data(bytes(c, 'utf-8')) for c in "Hello by"]
+        self.receiver.reader.feed_data(b"tes!")
 
-        assert self.gfr(bytes_fut) == b"Hello bytes!"
+        assert gfr(bytes_fut) == b"Hello bytes!"
 
     def test_transfer_message_async(self):
         message_fut = self.receiver.recvmessage()
@@ -221,51 +227,70 @@ class TestClient:
 
 class TestIntegration:
     def setup_method(self, method):
-        self.loop = async.Loop()
+        self.loop = testutils.TestLoop()
+        asyncio.set_event_loop(self.loop)
+
+        self.procloop = async.Loop()
+
         self.sending_processor = get_spy_processor()
         self.sending_processor.run()
-        self.loop.add_runner(self.sending_processor)
+        self.procloop.add_runner(self.sending_processor)
 
         self.sending_network = net.Network(self.sending_processor, async=True)
-        self.sending_network.run()
-        self.loop.add_runner(self.sending_network)
+        self.sending_network.step_until_done()
 
         self.receiving_processor = get_spy_processor()
         self.receiving_processor.run()
-        self.loop.add_runner(self.receiving_processor)
+        self.procloop.add_runner(self.receiving_processor)
 
         self.receiving_network = net.Network(self.receiving_processor, async=True)
-        self.receiving_network.run()
-        self.loop.add_runner(self.receiving_network)
+        self.receiving_network.step_until_done()
 
     def teardown_method(self, method):
         self.receiving_network.stop()
         self.receiving_processor.stop()
-
         self.sending_network.stop()
         self.sending_processor.stop()
+        self.loop.stop()
 
     def test_establish_connection(self):
-        self.receiving_network.listen(8000, async=True)
-        self.sending_network.connect(("127.0.0.1", 8000))
-        self.loop.run_until_done()
+        listen_fut = self.receiving_network.listen(8000)
+        self.loop.run_until_complete(listen_fut, raise_exceptions=False)
+        listen_fut.result()
+
+        sending_client_fut = self.sending_network.connect(("127.0.0.1", 8000))
+        self.loop.run_until_complete(sending_client_fut)
+        assert sending_client_fut.done()
+        self.receiving_network.stop_listening()
+        self.procloop.run_until_done()
         self.receiving_processor.signal.assert_called_with(net.Network.CLIENT_ACCEPTED, ANY)
 
     def test_send_and_receive_data(self):
         receiving_accepted_clients = queue.Queue()
         self.receiving_processor.register(net.Network.CLIENT_ACCEPTED, receiving_accepted_clients)
 
-        self.receiving_network.listen(8000, async=True)
-        sending_client = self.sending_network.connect(("127.0.0.1", 8000))
+        listen_fut = self.receiving_network.listen(8000)
+        self.loop.run_until_complete(listen_fut, raise_exceptions=False)
+        listen_fut.result()
+
+        sending_client_fut = self.sending_network.connect(("127.0.0.1", 8000))
+        self.loop.run_until_complete(sending_client_fut)
+        assert sending_client_fut.done()
+        sending_client = sending_client_fut.result()
         sending_client.send(b"Hello bytes!")
 
-        self.loop.run_until_done()
+        self.receiving_network.stop_listening()
+        self.procloop.run_until_done()
         self.receiving_processor.signal.assert_called_with(net.Network.CLIENT_ACCEPTED, ANY)
 
         signal_code, receiving_client = receiving_accepted_clients.get_nowait()
         assert signal_code == net.Network.CLIENT_ACCEPTED
-        assert receiving_client.recv() == b"Hello bytes!"
+        receiving_recv_fut = receiving_client.recv()
+        self.loop.run_until_complete(receiving_recv_fut)
+        assert receiving_recv_fut.result() == b"Hello bytes!"
 
         receiving_client.send(b"Hello! I got your message!")
-        self.loop.run_until_done()
-        assert sending_client.recv() == b"Hello! I got your message!"
+
+        sending_client_recv_fut = sending_client.recv()
+        self.loop.run_until_complete(sending_client_recv_fut)
+        assert sending_client_recv_fut.result() == b"Hello! I got your message!"
