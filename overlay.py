@@ -1,90 +1,56 @@
 # encoding: utf-8
-import queue
 import async
-from async import F, P
-import net
 
 
-class Overlay(async.EventThread):
-    def __init__(self, id, port, processor, network, *args, **kwargs):
-        super(Overlay, self).__init__(*args, **kwargs)
-        self.processor = processor
+class Overlay(object):
+    def __init__(self, id, port, network, peer_accepted_cb):
         self.network = network
         self.peers = {}
         self.port = port
-        self.accepted_clients = queue.Queue()
-        self.failed_connects = queue.Queue()
         self.id = id
+        self._peer_accepted_cb = peer_accepted_cb
+        self.network.set_client_accepted_cb(self.client_accepted_cb)
 
-    def setup(self):
-        self.processor.register(net.Network.CLIENT_ACCEPTED, self.accepted_clients)
-        self.processor.register(net.Network.FAILED_DO_CONNECT, self.failed_connects)
-        self.network.listen(self.port)
+    def client_accepted_cb(self, client):
+        peer_fut = self._accept_client(client)
+        peer_fut.add_done_callback(self._peer_accepted_cb)
 
-    def step(self):
-        accepted_client = False
-        try:
-            print("Step: ", self.id)
-            signal_code, client = self.accepted_clients.get_nowait()
-            print("Step: signal_code", self.id, signal_code)
-            if self.async:
-                async_accept_client = self.accept_client(client)
-                self.add_async(async_accept_client)
-            else:
-                self.accept_client(client).run()
-            accepted_client = True
-        except queue.Empty:
-            pass
+    @async.task
+    def _accept_client(self, client):
+        if client.is_outgoing:
+            client.sendmessage(bytes(self.id, 'utf-8'))
+            message = yield from client.recvmessage()
+            client.id = message
+        else:
+            message = yield from client.recvmessage()
+            client.id = message
+            client.sendmessage(bytes(self.id, 'utf-8'))
 
-        if self.execute_asyncs() and not accepted_client:
-            return True
-
-    def accept_client(self, client):
-        def async_accept_client():
-            if client.is_outgoing:
-                client.sendmessage(bytes(self.id, 'utf-8'))
-                print(self.id, client.id, "out?")
-
-                message_fut = client.recvmessage()
-                while 1:
-                    if message_fut.done():
-                        client.id = message_fut.result()
-                        break
-                    else:
-                        yield
-
-            else:
-                message_fut = client.recvmessage()
-                while 1:
-                    if message_fut.done():
-                        client.id = message_fut.result()
-                        break
-                    else:
-                        yield
-                client.sendmessage(bytes(self.id, 'utf-8'))
-
-            if client.id in self.peers:
-                if not client.is_outgoing:
-                    if client.id > self.id:
-                        self.network.disconnect_client(self.peers[client.id])
-                        self.peers[client.id] = client
-                    else:
-                        self.network.disconnect_client(client)
+        if client.id in self.peers:
+            if not client.is_outgoing:
+                if client.id > self.id:
+                    self.network.disconnect_client(self.peers[client.id])
+                    self.peers[client.id] = client
                 else:
-                    if self.id > client.id:
-                        self.network.disconnect_client(self.peers[client.id])
-                        self.peers[client.id] = client
-                    else:
-                        self.network.disconnect_client(client)
+                    self.network.disconnect_client(client)
             else:
-                self.peers[client.id] = client
+                if self.id > client.id:
+                    self.network.disconnect_client(self.peers[client.id])
+                    self.peers[client.id] = client
+                else:
+                    self.network.disconnect_client(client)
+        else:
+            self.peers[client.id] = client
+        return client
 
-        return P(async_accept_client())
-
-    def teardown(self):
-        self.processor.unregister(net.Network.FAILED_DO_CONNECT, self.failed_connects)
-        self.processor.unregister(net.Network.CLIENT_ACCEPTED, self.accepted_clients)
-
+    @async.task
     def add_peer(self, address):
-        self.processor.signal(net.Network.DO_CONNECT, address)
+        client = yield from self.network.connect(address)
+        peer = yield from self._accept_client(client)
+        return peer
+
+    @async.task
+    def listen(self):
+        yield from self.network.listen(self.port)
+        return
 
