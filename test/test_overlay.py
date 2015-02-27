@@ -5,6 +5,7 @@ import overlay
 from unittest.mock import Mock
 from test import testutils
 from test.testutils import create_future_result as cfr
+import pytest
 
 
 class TestOverlay:
@@ -17,20 +18,20 @@ class TestOverlay:
 
         self.outgoing_client_1 = Mock(spec=net.Client)()
         self.outgoing_client_1.is_outgoing = True
-        self.outgoing_client_1.recvmessage.return_value = cfr("2")
+        self.outgoing_client_1.recvmessage.return_value = cfr(b"2")
 
         self.incoming_client_1 = Mock(spec=net.Client)()
         self.incoming_client_1.is_outgoing = False
-        self.incoming_client_1.recvmessage.return_value = cfr("2")
+        self.incoming_client_1.recvmessage.return_value = cfr(b"2")
 
         self.overlay_2 = overlay.Overlay("2", 8002, self.network, self.peer_accepted_cb)
         self.outgoing_client_2 = Mock(spec=net.Client)()
         self.outgoing_client_2.is_outgoing = True
-        self.outgoing_client_2.recvmessage.return_value = cfr("1")
+        self.outgoing_client_2.recvmessage.return_value = cfr(b"1")
 
         self.incoming_client_2 = Mock(spec=net.Client)()
         self.incoming_client_2.is_outgoing = False
-        self.incoming_client_2.recvmessage.return_value = cfr("1")
+        self.incoming_client_2.recvmessage.return_value = cfr(b"1")
 
     def teardown_method(self, method):
         self.loop.close()
@@ -83,17 +84,23 @@ class TestIntegration:
         asyncio.set_event_loop(self.loop)
 
         self.network_1 = net.Network()
-        self.overlay_1 = overlay.Overlay("1", 8001, self.network_1, self.peer_accepted_cb)
+        self.overlay_1 = overlay.Overlay("1", 8001, self.network_1, self.overlay1_peer_accepted_cb)
 
         self.network_2 = net.Network()
-        self.overlay_2 = overlay.Overlay("2", 8002, self.network_2, self.peer_accepted_cb)
+        self.overlay_2 = overlay.Overlay("2", 8002, self.network_2, self.overlay2_peer_accepted_cb)
 
-        self.accepted_peer = None
+        self.overlay_1_accepted_peer = None
+        self.overlay_2_accepted_peer = None
 
-    def peer_accepted_cb(self, peer):
-        self.accepted_peer = peer
+    def overlay1_peer_accepted_cb(self, peer):
+        self.overlay_1_accepted_peer = peer
+
+    def overlay2_peer_accepted_cb(self, peer):
+        self.overlay_2_accepted_peer = peer
 
     def teardown_method(self, method):
+        self.overlay_1.stop()
+        self.overlay_2.stop()
         self.loop.close()
 
     def test_connect(self):
@@ -103,8 +110,28 @@ class TestIntegration:
 
         peer_fut = self.overlay_1.add_peer(("127.0.0.1", 8002))
         self.loop.run_until_complete(peer_fut)
-        assert peer_fut.result().id == b"2"
-        assert self.accepted_peer.result().id == b"1"
+        assert peer_fut.result().id == "2"
+        assert self.overlay_2_accepted_peer.result().id == "1"
 
-        assert list(self.overlay_2.peers.keys()) == [b"1"]
-        assert list(self.overlay_1.peers.keys()) == [b"2"]
+        assert list(self.overlay_2.peers.keys()) == ["1"]
+        assert list(self.overlay_1.peers.keys()) == ["2"]
+
+    @pytest.mark.xfail
+    def test_connect_both_ways(self):
+        overlay_1_peer_fut = self.overlay_1.add_peer(("127.0.0.1", 8002))
+        overlay_2_peer_fut = self.overlay_2.add_peer(("127.0.0.1", 8001))
+
+        overlay_2_listen_fut = self.overlay_2.listen()
+        overlay_1_listen_fut = self.overlay_1.listen()
+
+        self.loop.run_until_complete(overlay_2_listen_fut)
+        self.loop.run_until_complete(overlay_1_listen_fut)
+
+        self.loop.run_until_complete(overlay_1_peer_fut)
+        self.loop.run_until_complete(overlay_2_peer_fut)
+
+        assert overlay_1_peer_fut.result().id == "2"
+        assert self.overlay_2_accepted_peer.result().id == "1"
+
+        assert list(self.overlay_2.peers.keys()) == ["1"]
+        assert list(self.overlay_1.peers.keys()) == ["2"]

@@ -20,10 +20,10 @@ class Overlay(object):
         if client.is_outgoing:
             client.sendmessage(bytes(self.id, 'utf-8'))
             message = yield from client.recvmessage()
-            client.id = message
+            client.id = str(message, encoding='utf-8')
         else:
             message = yield from client.recvmessage()
-            client.id = message
+            client.id = str(message, encoding='utf-8')
             client.sendmessage(bytes(self.id, 'utf-8'))
 
         if client.id in self.peers:
@@ -54,3 +54,5 @@ class Overlay(object):
         yield from self.network.listen(self.port)
         return
 
+    def stop(self):
+        self.network.stop()

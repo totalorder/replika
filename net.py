@@ -17,7 +17,6 @@ class Client(object):
         return "Client(%s: %s, %s)" % (self.id, self.address, "out" if self.is_outgoing else "in")
 
     def close(self):
-        self.reader.close()
         self.writer.close()
 
     def send(self, data):
@@ -87,7 +86,8 @@ class Network(object):
             listener = yield from asyncio.start_server(
                 self._connection_accepted_cb,
                 "0.0.0.0",
-                port
+                port,
+                reuse_address=True
             )
             self.listeners[port] = listener
             return
