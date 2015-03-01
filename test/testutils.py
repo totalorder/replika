@@ -1,13 +1,6 @@
 # encoding: utf-8
 import asyncio
 import asyncio.base_events
-from unittest.mock import Mock
-import signals
-
-
-def get_spy_processor():
-    processor = signals.Processor(async=True)
-    return Mock(spec=signals.Processor, wraps=processor)
 
 
 def create_future_result(result):
@@ -21,7 +14,6 @@ def get_future_result(future, loop=None):
         loop = asyncio.get_event_loop()
     loop.run_until_no_events()
     return future.result()
-
 
 
 class TestLoop(asyncio.get_event_loop().__class__):

@@ -1,7 +1,7 @@
 # encoding: utf-8
 from unittest.mock import Mock, ANY, patch
 import pytest
-import net
+from py2py import net
 import asyncio
 import asyncio.base_events
 import asyncio.tasks

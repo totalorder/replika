@@ -1,7 +1,7 @@
 # encoding: utf-8
 import struct
 import asyncio
-import async
+from py2py import async
 from util import HierarchyLogger
 
 
@@ -11,7 +11,6 @@ class Client(object):
         self.reader = reader
         self.writer = writer
         self.is_outgoing = is_outgoing
-        self.id = None
 
     def __repr__(self):
         return "Client(%s: %s, %s)" % (self.id, self.address, "out" if self.is_outgoing else "in")

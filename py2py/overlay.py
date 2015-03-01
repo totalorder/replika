@@ -1,5 +1,16 @@
 # encoding: utf-8
-import async
+from py2py import async
+from py2py import net
+
+
+class Peer(net.Client):
+    def __init__(self, id, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.id = id
+
+    @classmethod
+    def from_client(cls, id, client):
+        return Peer(id, client.address, client.reader, client.writer, client.is_outgoing)
 
 
 class Overlay(object):
@@ -20,28 +31,30 @@ class Overlay(object):
         if client.is_outgoing:
             client.sendmessage(bytes(self.id, 'utf-8'))
             message = yield from client.recvmessage()
-            client.id = str(message, encoding='utf-8')
+            remote_id = str(message, encoding='utf-8')
         else:
             message = yield from client.recvmessage()
-            client.id = str(message, encoding='utf-8')
+            remote_id = str(message, encoding='utf-8')
             client.sendmessage(bytes(self.id, 'utf-8'))
 
-        if client.id in self.peers:
-            if not client.is_outgoing:
-                if client.id > self.id:
-                    self.network.disconnect_client(self.peers[client.id])
-                    self.peers[client.id] = client
+        peer = Peer.from_client(remote_id, client)
+
+        if peer.id in self.peers:
+            if not peer.is_outgoing:
+                if peer.id > self.id:
+                    self.network.disconnect_client(self.peers[peer.id])
+                    self.peers[peer.id] = peer
                 else:
-                    self.network.disconnect_client(client)
+                    self.network.disconnect_client(peer)
             else:
-                if self.id > client.id:
-                    self.network.disconnect_client(self.peers[client.id])
-                    self.peers[client.id] = client
+                if self.id > peer.id:
+                    self.network.disconnect_client(self.peers[peer.id])
+                    self.peers[peer.id] = peer
                 else:
-                    self.network.disconnect_client(client)
+                    self.network.disconnect_client(peer)
         else:
-            self.peers[client.id] = client
-        return client
+            self.peers[peer.id] = peer
+        return peer
 
     @async.task
     def add_peer(self, address):
