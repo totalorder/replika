@@ -1,4 +1,7 @@
 # encoding: utf-8
+import functools
+from io import StringIO
+import os
 from unittest.mock import Mock, ANY, patch
 import pytest
 from py2py import net
@@ -28,9 +31,7 @@ def create_start_server_side_effect(loop=None):
     return start_server_side_effect
 
 
-def create_open_connection_side_effect(loop, reader_mock=None, fail=False):
-    # loop is shadowed in the inner function
-    outer_loop = loop
+def create_open_connection_side_effect(reader_mock=None, fail=False):
     # reader_mock cannot be written to from the inner function scope
     # read outer_reader_mock and write to shadowed reader_mock
     outer_reader_mock = reader_mock
@@ -104,20 +105,20 @@ class TestNetwork:
 
     def test_recv_data(self):
         reader_mock = Mock(spec=asyncio.streams.StreamReader)
-        self.asyncio_open_connection_mock.side_effect = create_open_connection_side_effect(self.loop, reader_mock)
+        self.asyncio_open_connection_mock.side_effect = create_open_connection_side_effect(reader_mock)
         reader_mock.read.return_value = cfr(b"Hello bytes!")
         client = gfr(self.network.connect(("127.0.0.1", 8000)))
         assert gfr(client.recv()) == b"Hello bytes!"
 
     def test_connect(self):
-        self.asyncio_open_connection_mock.side_effect = create_open_connection_side_effect(self.loop)
+        self.asyncio_open_connection_mock.side_effect = create_open_connection_side_effect()
         client_fut = self.network.connect(("127.0.0.1", 8001))
         self.loop.run_until_no_events()
         assert client_fut.done()
         assert client_fut.result().address == ("127.0.0.1", 8001)
 
     def test_failed_connect(self):
-        self.asyncio_open_connection_mock.side_effect = create_open_connection_side_effect(self.loop, fail=True)
+        self.asyncio_open_connection_mock.side_effect = create_open_connection_side_effect(fail=True)
         client_fut = self.network.connect(("127.0.0.1", 8001))
         self.loop.run_until_no_events(raise_exceptions=False)
         with pytest.raises(ConnectionError) as excinfo:
@@ -161,6 +162,27 @@ class TestClient:
     def test_transfer_message(self):
         self.sender.sendmessage(b"Hello bytes!")
         assert gfr(self.receiver.recvmessage()) == b"Hello bytes!"
+
+    def test_transfer_file(self):
+        file_content = b"Hello bytes!"
+        metadata = b"metadata"
+        fake_file = testutils.FakeFile(file_content)
+        self.loop.add_reader = Mock()
+
+        with patch('os.fstat') as fstat_call_mock:
+            fstat_result_mock = Mock()
+            fstat_call_mock.return_value = fstat_result_mock
+            fstat_result_mock.st_size = len(file_content)
+            send_done = self.sender.sendfile(fake_file, metadata)
+
+        self.loop.call_soon(functools.partial(self.sender._sendfile_read_ready, fake_file, send_done))
+        self.loop.call_soon(functools.partial(self.sender._sendfile_read_ready, fake_file, send_done))
+        self.loop.run_until_complete(send_done)
+
+        with patch('tempfile.TemporaryFile', new_callable=testutils.FakeFile):
+            received_file, recevied_metadata = gfr(self.receiver.recvfile())
+            assert received_file.read() == file_content
+            assert recevied_metadata == metadata
 
     def test_recvbytes_async(self):
         bytes_fut = self.receiver.recvbytes(12)

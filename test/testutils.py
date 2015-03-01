@@ -57,3 +57,25 @@ class TestLoop(asyncio.get_event_loop().__class__):
 
         if self._no_events():
             raise asyncio.base_events._StopError
+
+
+class FakeFile:
+    def __init__(self, data=b""):
+        self.data = data
+
+    def __call__(self, *args, **kwargs):
+        return FakeFile()
+
+    def fileno(self):
+        return 10000
+
+    def read(self, n=None):
+        data = self.data
+        self.data = ""
+        return data
+
+    def write(self, data):
+        self.data += data
+
+    def seek(self, n):
+        pass

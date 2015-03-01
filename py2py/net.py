@@ -1,6 +1,9 @@
 # encoding: utf-8
+import functools
+import os
 import struct
 import asyncio
+import tempfile
 from py2py import async
 from util import HierarchyLogger
 
@@ -13,7 +16,7 @@ class Client(object):
         self.is_outgoing = is_outgoing
 
     def __repr__(self):
-        return "Client(%s: %s, %s)" % (self.id, self.address, "out" if self.is_outgoing else "in")
+        return "Client(%s, %s)" % (self.address, "out" if self.is_outgoing else "in")
 
     def close(self):
         self.writer.close()
@@ -21,6 +24,44 @@ class Client(object):
     def send(self, data):
         print("Send:", data)
         self.writer.write(data)
+
+    def _sendfile_read_ready(self, file, done_fut):
+        try:
+            data = file.read(65536)
+            if data:
+                self.writer.write(data)
+            else:
+                asyncio.get_event_loop().remove_reader(file)
+                done_fut.set_result(file)
+        except Exception as e:
+            done_fut.set_exception(e)
+
+    def sendfile(self, file, metadata):
+        done_fut = asyncio.futures.Future()
+        self.sendmessage(metadata)
+        file_size = os.fstat(file.fileno()).st_size
+
+        self.send(struct.pack("!I", file_size))
+
+        asyncio.get_event_loop().add_reader(
+            file.fileno(), functools.partialmethod(self._sendfile_read_ready, file, done_fut))
+        return done_fut
+
+    @async.task
+    def recvfile(self):
+        metadata = yield from self.recvmessage()
+        f = tempfile.TemporaryFile()
+        file_size = (yield from self.recvdata("I"))[0]
+        while file_size > 0:
+            data = yield from self.reader.read(min(65536, file_size))
+            data_size = len(data)
+            f.write(data)
+            if data_size == 0:
+                break
+
+            file_size -= data_size
+        f.seek(0)
+        return f, metadata
 
     @async.task
     def recv(self):
