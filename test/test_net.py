@@ -1,7 +1,4 @@
 # encoding: utf-8
-import functools
-from io import StringIO
-import os
 from unittest.mock import Mock, ANY, patch
 import pytest
 from py2py import net
@@ -167,7 +164,6 @@ class TestClient:
         file_content = b"Hello bytes!"
         metadata = b"metadata"
         fake_file = testutils.FakeFile(file_content)
-        self.loop.add_reader = Mock()
 
         with patch('os.fstat') as fstat_call_mock:
             fstat_result_mock = Mock()
@@ -175,9 +171,7 @@ class TestClient:
             fstat_result_mock.st_size = len(file_content)
             send_done = self.sender.sendfile(fake_file, metadata)
 
-        self.loop.call_soon(functools.partial(self.sender._sendfile_read_ready, fake_file, send_done))
-        self.loop.call_soon(functools.partial(self.sender._sendfile_read_ready, fake_file, send_done))
-        self.loop.run_until_complete(send_done)
+            self.loop.run_until_complete(send_done)
 
         with patch('tempfile.TemporaryFile', new_callable=testutils.FakeFile):
             received_file, recevied_metadata = gfr(self.receiver.recvfile())
@@ -266,3 +260,31 @@ class TestIntegration:
         sending_client_recv_fut = sending_client.recv()
         self.loop.run_until_complete(sending_client_recv_fut)
         assert sending_client_recv_fut.result() == b"Hello! I got your message!"
+
+    def test_transfer_file(self, tmpdir):
+        listen_fut = self.receiving_network.listen(8000)
+        self.loop.run_until_complete(listen_fut, raise_exceptions=False)
+        listen_fut.result()
+
+        sending_client_fut = self.sending_network.connect(("127.0.0.1", 8000))
+        self.loop.run_until_complete(sending_client_fut)
+        assert sending_client_fut.done()
+        sending_client = sending_client_fut.result()
+        assert sending_client.address == ("127.0.0.1", 8000)
+        assert self.receiving_client.address == ("127.0.0.1", ANY)
+
+        tmp_file_path = tmpdir.join("test_file.txt")
+        tmp_file = tmp_file_path.open(mode='wb+', ensure=True)
+        tmp_file.write(b"File content!")
+        tmp_file.seek(0)
+
+        sendfile_fut = sending_client.sendfile(tmp_file, b"Some metadata")
+
+        self.loop.run_until_complete(sendfile_fut)
+
+        with patch('tempfile.TemporaryFile', new_callable=testutils.FakeFile):
+            recvfile_fut = self.receiving_client.recvfile()
+            self.loop.run_until_complete(recvfile_fut)
+            received_file, recevied_metadata = recvfile_fut.result()
+            assert received_file.read() == b"File content!"
+            assert recevied_metadata == b"Some metadata"

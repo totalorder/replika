@@ -2,7 +2,7 @@
 import asyncio
 from py2py import net
 from py2py import overlay
-from unittest.mock import Mock, ANY
+from unittest.mock import Mock, ANY, patch
 from test import testutils
 from test.testutils import create_future_result as cfr
 
@@ -62,6 +62,25 @@ class TestOverlay:
         self.overlay_1.file_clients.keys() == ["2"]
         assert self.overlay_1.file_clients["2"].address == self.incoming_client_1.address
         assert list(self.overlay_1.unbound_file_clients.keys()) == ["2"]
+
+    def test_file_client_bound(self):
+        peer_fut = self.overlay_1._accept_client(self.incoming_client_1)
+        self.loop.run_until_complete(peer_fut)
+        assert peer_fut.result().id == "2"
+        assert list(self.overlay_1.peers.keys()) == ["2"]
+        assert self.overlay_1.peers["2"].address == self.incoming_client_1.address
+
+        self.incoming_client_1.recvdata.return_value = cfr((overlay.Overlay.ConnectionType.FILE_CLIENT,))
+
+        file_client_fut = self.overlay_1._accept_client(self.incoming_client_1)
+        self.loop.run_until_complete(file_client_fut)
+        assert file_client_fut.result().id == "2"
+        self.overlay_1.file_clients.keys() == ["2"]
+        assert self.overlay_1.file_clients["2"].address == self.incoming_client_1.address
+
+        assert self.overlay_1.peers["2"].file_client == self.overlay_1.file_clients["2"]
+        assert list(self.overlay_1.unbound_file_clients.keys()) == []
+
 
     def test_accept_lower_incoming_then_outgoing(self):
         incoming_peer_fut = self.overlay_1._accept_client(self.incoming_client_1)
@@ -177,3 +196,39 @@ class TestIntegration:
 
         assert list(self.overlay_2.peers.keys()) == ["1"]
         assert list(self.overlay_1.peers.keys()) == ["2"]
+
+    def test_transfer_data_and_file(self, tmpdir):
+        listen_fut = self.overlay_2.listen()
+        self.loop.run_until_complete(listen_fut, raise_exceptions=True)
+        assert listen_fut.done()
+
+        peer_fut = self.overlay_1.add_peer(("127.0.0.1", 8002))
+        self.loop.run_until_complete(peer_fut)
+        assert peer_fut.result().id == "2"
+        assert peer_fut.result().address == ("127.0.0.1", 8002)
+        assert peer_fut.result().file_client.id == "2"
+        assert list(self.overlay_1.peers.keys()) == ["2"]
+
+        assert list(self.overlay_2.peers.keys()) == ["1"]
+        assert self.overlay_2.peers["1"].id == "1"
+        assert self.overlay_2.peers["1"].address == ("127.0.0.1", ANY)
+        assert self.overlay_2.peers["1"].file_client.id == "1"
+
+        tmp_file_path = tmpdir.join("test_file.txt")
+        tmp_file = tmp_file_path.open(mode='wb+', ensure=True)
+        tmp_file.write(b"File content!")
+        tmp_file.seek(0)
+
+        self.overlay_1.peers["2"].sendfile(tmp_file, b"Some metadata")
+
+        with patch('tempfile.TemporaryFile', new_callable=testutils.FakeFile):
+            recvfile_fut = self.overlay_2.peers["1"].recvfile()
+            self.loop.run_until_complete(recvfile_fut)
+            received_file, recevied_metadata = recvfile_fut.result()
+            assert received_file.read() == b"File content!"
+            assert recevied_metadata == b"Some metadata"
+
+        self.overlay_1.peers["2"].sendmessage(b"Hello!")
+        recvmessage_fut = self.overlay_2.peers["1"].recvmessage()
+        self.loop.run_until_complete(recvmessage_fut)
+        assert recvmessage_fut.result() == b"Hello!"

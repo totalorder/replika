@@ -4,25 +4,39 @@ from py2py import async
 from py2py import net
 
 
-class Peer(net.Client):
+class FileClient(net.Client):
     def __init__(self, id, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.id = id
+
+    @staticmethod
+    def from_client(id, client):
+        return FileClient(id, client.address, client.reader, client.writer, client.is_outgoing)
+
+    def sendfile(self, path, metadata=None):
+        return super().sendfile(path, metadata)
+
+    def recvfile(self):
+        return super().recvfile()
+
+
+class Peer(FileClient):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.file_client = None
+
+    @staticmethod
+    def from_client(id, client):
+        return Peer(id, client.address, client.reader, client.writer, client.is_outgoing)
 
     def set_file_client(self, client):
         self.file_client = client
 
-    @classmethod
-    def from_client(cls, id, client):
-        return cls(id, client.address, client.reader, client.writer, client.is_outgoing)
-
     def sendfile(self, path, metadata=None):
-        self.file_client.sendfile(path, metadata)
+        return self.file_client.sendfile(path, metadata)
 
-    @async.task
     def recvfile(self):
-        yield from self.file_client.recvfile()
+        return self.file_client.recvfile()
 
 
 class Overlay(object):
@@ -80,11 +94,12 @@ class Overlay(object):
             raise Exception("Invalid connection type: {}".format(connection_type))
 
         if is_file_client:
+            peer = FileClient.from_client(remote_id, client)
             existing_peers = self.file_clients
         else:
+            peer = Peer.from_client(remote_id, client)
             existing_peers = self.peers
 
-        peer = Peer.from_client(remote_id, client)
         if peer.id in existing_peers:
             if not peer.is_outgoing:
                 if peer.id > self.id:
