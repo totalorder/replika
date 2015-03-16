@@ -4,7 +4,7 @@ from os import remove, rmdir, makedirs
 from os.path import exists, join as jn, isdir
 import shutil
 from filesystem import ReplikaFileSystemEventHandler, get_file_hash
-from network import EventType
+from event import EventType
 from util import HierarchyLogger
 
 

@@ -1,5 +1,4 @@
 # encoding: utf-8
-import functools
 import os
 import struct
 import asyncio
@@ -22,7 +21,6 @@ class Client(object):
         self.writer.close()
 
     def send(self, data):
-        print("Send:", data)
         self.writer.write(data)
 
     @async.task
@@ -41,7 +39,7 @@ class Client(object):
     @async.task
     def recvfile(self):
         metadata = yield from self.recvmessage()
-        f = tempfile.TemporaryFile()
+        f = tempfile.NamedTemporaryFile()
         file_size = (yield from self.recvdata("I"))[0]
         while file_size > 0:
             data = yield from self.reader.read(min(65536, file_size))
@@ -62,6 +60,9 @@ class Client(object):
     def sendmessage(self, msg):
         self.send(struct.pack("!I", len(msg)) + msg)
 
+    def sendstring(self, msg):
+        self.sendmessage(msg.encode('utf-8'))
+
     def senddata(self, format, *data):
         packed = struct.pack("!" + format, *data)
         self.send(packed)
@@ -77,6 +78,11 @@ class Client(object):
         num = struct.unpack("!I", bytes)[0]
         msg = yield from self.recvbytes(num)
         return msg
+
+    @async.task
+    def recvstring(self):
+        bytes = yield from self.recvmessage()
+        return bytes.decode('utf-8')
 
     @async.task
     def recvbytes(self, num):

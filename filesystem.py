@@ -1,6 +1,6 @@
 # encoding: utf-8
 from watchdog.events import FileSystemEventHandler
-from network import EventType
+from event import EventType
 from os.path import getsize, getmtime
 from os import sep
 import hashlib

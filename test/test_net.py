@@ -160,6 +160,10 @@ class TestClient:
         self.sender.sendmessage(b"Hello bytes!")
         assert gfr(self.receiver.recvmessage()) == b"Hello bytes!"
 
+    def test_transfer_string(self):
+        self.sender.sendstring("Hello äåö!")
+        assert gfr(self.receiver.recvstring()) == "Hello äåö!"
+
     def test_transfer_file(self):
         file_content = b"Hello bytes!"
         metadata = b"metadata"
