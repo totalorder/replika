@@ -1,6 +1,5 @@
 # encoding: utf-8
 import asyncio
-import functools
 import os
 import queue
 import shutil
@@ -79,9 +78,10 @@ class Peer:
         return struct.unpack("!" + format, chunk), pos + struct_size
 
 
-class Client(threading.Thread):
+class Client(async.FlightControl, threading.Thread):
     def __init__(self, id, ring, loop=None):
-        super(Client, self).__init__()
+        super().__init__()
+        self.setDaemon(True)
         self.id = id
         self.ring = ring
         self.peers = {}
@@ -103,15 +103,22 @@ class Client(threading.Thread):
 
     @async.task
     def accept_peer(self, overlay_peer):
-        if overlay_peer.is_outgoing:
-            overlay_peer.sendstring(self.ring)
-            remote_ring = yield from overlay_peer.recvstring()
+        if overlay_peer not in self.flight:
+            with self.flight_control(overlay_peer) as plane:
+                print(self.id, "accept_peer START", id(overlay_peer))
+                if overlay_peer.is_outgoing:
+                    overlay_peer.sendstring(self.ring)
+                    remote_ring = yield from overlay_peer.recvstring()
+                else:
+                    remote_ring = yield from overlay_peer.recvstring()
+                    overlay_peer.sendstring(self.ring)
+                peer = Peer(remote_ring, overlay_peer, self.received_messages)
+                self.peers[peer.ident] = peer
+                print(self.id, "accept_peer END", id(overlay_peer))
+                plane.set_result(peer)
         else:
-            remote_ring = yield from overlay_peer.recvstring()
-            overlay_peer.sendstring(self.ring)
+            peer = yield from self.landed_flight(overlay_peer)
 
-        peer = Peer(remote_ring, overlay_peer, self.received_messages)
-        self.peers[peer.ident] = peer
         return peer
 
     def run(self):
@@ -127,7 +134,6 @@ class Client(threading.Thread):
             self.observer.start()
 
             self.loop.call_soon(self._process_messages)
-            self.loop.call_at(self.loop.time() + 1, self.loop.stop)
 
             print(self.id, "Running loop!")
             self.loop.run_forever()
@@ -137,10 +143,11 @@ class Client(threading.Thread):
         if self.running:
             self.running = False
             self.logger.info("Stopping client")
-            [peer.stop() for peer in list(self.peers.values())]
+            [self.overlay.disconnect_peer(peer.overlay_peer) for peer in list(self.peers.values())]
             self.observer.stop()
             self.observer.join()
             self.overlay.stop()
+            self.loop.close()
             self.join()
 
     def add_peer(self, address):
@@ -148,8 +155,18 @@ class Client(threading.Thread):
 
     @async.task
     def _add_peer(self, address):
+        existing_peer = [peer for peer in self.peers.values() if peer.address == address]
+        if existing_peer:
+            print(self.id, "address already connected", address)
+            return existing_peer[0]
+
         overlay_peer = yield from self.overlay.add_peer(address)
-        peer = yield from self.accept_peer(overlay_peer)
+        print(self.id, "_add_peer")
+        try:
+            peer = yield from self.accept_peer(overlay_peer)
+        except RuntimeError:
+            print(self.id, "dead :(")
+            raise
         return peer
 
     def _get_sync_point_info(self):
@@ -159,6 +176,8 @@ class Client(threading.Thread):
         self.sync_points[sync_point].signal(source_path, event_type)
 
     def _process_messages(self):
+        sys.stdout.flush()
+        sys.stderr.flush()
         while 1:
             try:
                 address = self.peers_to_add.get_nowait()
@@ -244,5 +263,6 @@ if __name__ == "__main__":
             time.sleep(1)
     except KeyboardInterrupt:
         print("Stopping Replika!")
-        [client.stop() for client in clients]
+        sys.exit(0)
+        #[client.stop() for client in clients]
     print("Replika stopped!")

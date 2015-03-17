@@ -43,7 +43,7 @@ class EventType(object):
                 string = getattr(evt, field_name)
                 pack.append(len(string))
                 strings.append(string)
-        return struct.pack(EventType.header + EventType.pack_format[evt.type], *pack) + "".join(strings)
+        return struct.pack(EventType.header + EventType.pack_format[evt.type], *pack) + b"".join([string.encode("utf-8") for string in strings])
 
     @staticmethod
     def deserialize(msg):
@@ -54,7 +54,7 @@ class EventType(object):
                                  msg[pos:pos + EventType.pack_size[event_type]])
         pos += EventType.pack_size[event_type]
 
-        sync_point = msg[pos:pos + sync_point_len]
+        sync_point = msg[pos:pos + sync_point_len].decode('utf-8')
         pos += sync_point_len
 
         fields = []
@@ -63,7 +63,7 @@ class EventType(object):
             if field_type != 's':
                 fields.append(field)
             else:
-                fields.append(msg[pos:pos + field])
+                fields.append(msg[pos:pos + field].decode('utf-8'))
                 pos += field
         return EventType.type[event_type](event_type, sync_point, *fields)
 

@@ -156,19 +156,24 @@ class TestIntegration:
         self.overlay_2 = overlay.Overlay("2", 8002, self.network_2, self.overlay2_peer_accepted_cb)
         self.overlay_2.retry_wait = 0.1
 
-        self.overlay_1_accepted_peer = asyncio.Future()
-        self.overlay_2_accepted_peer = asyncio.Future()
+        self.overlay_1_accepted_peers = [asyncio.Future()]
+        self.overlay_2_accepted_peers = [asyncio.Future()]
 
     def overlay1_peer_accepted_cb(self, peer):
-        if self.overlay_1_accepted_peer.done():
-            self.overlay_1_accepted_peer = asyncio.Future()
-        self.overlay_1_accepted_peer.set_result(peer)
+        print("overlay1_peer_accepted_cb")
+        self.overlay_1_accepted_peers[-1].set_result(peer)
+        self.overlay_1_accepted_peers.append(asyncio.Future())
 
     def overlay2_peer_accepted_cb(self, peer):
-        if self.overlay_2_accepted_peer.done():
-            self.overlay_2_accepted_peer = asyncio.Future()
+        print("overlay2_peer_accepted_cb")
+        self.overlay_2_accepted_peers[-1].set_result(peer)
+        self.overlay_2_accepted_peers.append(asyncio.Future())
 
-        self.overlay_2_accepted_peer.set_result(peer)
+    def overlay_1_num_accepted_peers(self):
+        return len([1 for peer_fut in self.overlay_1_accepted_peers if peer_fut.done()])
+
+    def overlay_2_num_accepted_peers(self):
+        return len([1 for peer_fut in self.overlay_2_accepted_peers if peer_fut.done()])
 
     def teardown_method(self, method):
         self.overlay_1.stop()
@@ -192,7 +197,9 @@ class TestIntegration:
         assert peer_fut.result().file_client.id == "2"
         assert list(self.overlay_1.peers.keys()) == ["2"]
 
-        self.loop.run_until_complete(self.overlay_2_accepted_peer)
+        self.loop.run_until_complete(self.overlay_2_accepted_peers[0])
+        assert self.overlay_1_num_accepted_peers() == 0
+        assert self.overlay_2_num_accepted_peers() == 1
 
         assert list(self.overlay_2.peers.keys()) == ["1"]
         assert self.overlay_2.peers["1"].id == "1"
@@ -212,6 +219,12 @@ class TestIntegration:
         self.loop.run_until_complete(overlay_1_peer_fut, raise_exceptions=False)
         self.loop.run_until_complete(overlay_2_peer_fut, raise_exceptions=False)
 
+
+        assert list(self.overlay_1.peers.keys()) == ["2"]
+        assert list(self.overlay_2.peers.keys()) == ["1"]
+        assert self.overlay_1_num_accepted_peers() == 0
+        assert self.overlay_2_num_accepted_peers() == 0
+
     def test_transfer_data_and_file(self, tmpdir):
         overlay_1_listen_fut = self.overlay_1.listen()
         self.loop.run_until_complete(overlay_1_listen_fut, raise_exceptions=True)
@@ -229,7 +242,7 @@ class TestIntegration:
         assert peer_fut.result().file_client.id == "2"
         assert list(self.overlay_1.peers.keys()) == ["2"]
 
-        self.loop.run_until_complete(self.overlay_2_accepted_peer)
+        self.loop.run_until_complete(self.overlay_2_accepted_peers[0])
         assert list(self.overlay_2.peers.keys()) == ["1"]
         assert self.overlay_2.peers["1"].id == "1"
         assert self.overlay_2.peers["1"].address == ("127.0.0.1", ANY)

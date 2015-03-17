@@ -42,12 +42,13 @@ class Peer(FileClient):
         return self.file_client.recvfile()
 
 
-class Overlay(object):
+class Overlay(async.FlightControl):
     class ConnectionType(object):
         PEER = 0
         FILE_CLIENT = 1
 
     def __init__(self, id, port, network, peer_accepted_cb):
+        super().__init__()
         self.network = network
         self.peers = {}
         self.file_clients = {}
@@ -59,16 +60,19 @@ class Overlay(object):
         self.retry_wait = 5
         self.reverse_direction_client_futs = {}
         self.reverse_direction_file_client_futs = {}
-        self.connections_in_progress = {}
 
     def client_accepted_cb(self, client):
         accept_client_fut = self._accept_client(client)
+        print(self.id, "add_done_callback")
         accept_client_fut.add_done_callback(self._client_accepted_cb)
 
     def _client_accepted_cb(self, accepted_client_fut):
         peer, run_callback = accepted_client_fut.result()
         if run_callback:
+            print(self.id, "run_callback")
             self._peer_accepted_cb(peer)
+        else:
+            print(self.id, "don't run callback")
 
     @async.task
     def _negotiate_client_info(self, client, file_client):
@@ -148,12 +152,13 @@ class Overlay(object):
                     resulting_peer = yield from self.add_peer(peer.address)
             else:
                 if self.id > peer.id:
-                    print(self.id, fc, "received > outgoing:", peer.id, "(connect)", peer.reader._transport._sock_fd)
+                    print(self.id, fc, "received > outgoing:", peer.id, "(connect)", peer.reader._transport._sock_fd, "callback:", run_callback)
                     existing_peers[peer.id] = peer
                     self._bind_file_client(peer, is_file_client)
                     resulting_peer = peer
                 else:
                     print(self.id, fc, "received < outgoing:", peer.id, "(nothing + yield reverse)", peer.reader._transport._sock_fd)
+                    run_callback = False
                     self.network.disconnect_client(peer)
                     reverse_direction_fut = asyncio.Future()
                     reverse_direction_futs[peer.id] = reverse_direction_fut
@@ -163,8 +168,10 @@ class Overlay(object):
             self.network.disconnect_client(peer)
             resulting_peer = existing_peers[peer.id]
             run_callback = False
-        if peer.address in self.connections_in_progress:
+        if peer.address in self.flight:
+            print(self.id, "connections_in_progress")
             run_callback = False
+        print(self.id, fc, "run_callback", run_callback)
         return resulting_peer, run_callback
 
     @async.task
@@ -198,19 +205,18 @@ class Overlay(object):
 
     @async.task
     def add_peer(self, address):
-        if address not in self.connections_in_progress:
-            fut = asyncio.futures.Future()
-            self.connections_in_progress[address] = fut
-            client, file_client = yield from self._connect_with_retries(address)
+        if address not in self.flight:
+            with self.flight_control(address) as plane:
+                client, file_client = yield from self._connect_with_retries(address)
 
-            yield from self._accept_client(file_client, file_client=True)
+                yield from self._accept_client(file_client, file_client=True)
 
-            peer, _ = yield from self._accept_client(client)
-            fut.set_result(peer)
-            del self.connections_in_progress[address]
+                peer, _ = yield from self._accept_client(client)
+                print(self.id, "i don't care")
+                plane.set_result(peer)
             return peer
         else:
-            return (yield from self.connections_in_progress[address])
+            return (yield from self.landed_flight(address))
 
     @async.task
     def listen(self):
