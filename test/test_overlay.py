@@ -13,31 +13,37 @@ class TestOverlay:
         asyncio.set_event_loop(self.loop)
 
         self.network = Mock(spec=net.Network)
-        self.overlay_1 = overlay.Overlay("1", 8001, self.network, self.peer_accepted_cb)
+        self.overlay_1 = overlay.Overlay("1", 8001, self.network,
+                                         self.peer_accepted_cb)
 
         self.outgoing_client_1 = Mock(spec=net.Client)()
         self.outgoing_client_1.is_outgoing = True
         self.outgoing_client_1.recvmessage.return_value = cfr(b"2")
-        self.outgoing_client_1.recvdata.return_value = cfr((8002, overlay.Overlay.ConnectionType.PEER))
+        self.outgoing_client_1.recvdata.return_value = \
+            cfr((8002, overlay.Overlay.ConnectionType.PEER))
         self.outgoing_client_1.address = ("127.0.0.1", 8002)
 
         self.incoming_client_1 = Mock(spec=net.Client)()
         self.incoming_client_1.is_outgoing = False
         self.incoming_client_1.recvmessage.return_value = cfr(b"2")
-        self.incoming_client_1.recvdata.return_value = cfr((8002, overlay.Overlay.ConnectionType.PEER))
+        self.incoming_client_1.recvdata.return_value = \
+            cfr((8002, overlay.Overlay.ConnectionType.PEER))
         self.incoming_client_1.address = ("127.0.0.1", 8002)
 
-        self.overlay_2 = overlay.Overlay("2", 8002, self.network, self.peer_accepted_cb)
+        self.overlay_2 = overlay.Overlay("2", 8002, self.network,
+                                         self.peer_accepted_cb)
         self.outgoing_client_2 = Mock(spec=net.Client)()
         self.outgoing_client_2.is_outgoing = True
         self.outgoing_client_2.recvmessage.return_value = cfr(b"1")
-        self.outgoing_client_2.recvdata.return_value = cfr((8001, overlay.Overlay.ConnectionType.PEER))
+        self.outgoing_client_2.recvdata.return_value = \
+            cfr((8001, overlay.Overlay.ConnectionType.PEER))
         self.outgoing_client_2.address = ("127.0.0.1", 8001)
 
         self.incoming_client_2 = Mock(spec=net.Client)()
         self.incoming_client_2.is_outgoing = False
         self.incoming_client_2.recvmessage.return_value = cfr(b"1")
-        self.incoming_client_2.recvdata.return_value = cfr((8001, overlay.Overlay.ConnectionType.PEER))
+        self.incoming_client_2.recvdata.return_value = \
+            cfr((8001, overlay.Overlay.ConnectionType.PEER))
         self.incoming_client_2.address = ("127.0.0.1", 8001)
 
         def network_connect_side_effect(address):
@@ -61,17 +67,20 @@ class TestOverlay:
         peer, run_callback = peer_fut.result()
         assert peer.id == "2"
         assert list(self.overlay_1.peers.keys()) == ["2"]
-        assert self.overlay_1.peers["2"].address == self.incoming_client_1.address
+        assert self.overlay_1.peers["2"].address == \
+               self.incoming_client_1.address
 
     def test_accept_file_client(self):
-        self.incoming_client_1.recvdata.return_value = cfr((8002, overlay.Overlay.ConnectionType.FILE_CLIENT))
+        self.incoming_client_1.recvdata.return_value = \
+            cfr((8002, overlay.Overlay.ConnectionType.FILE_CLIENT))
 
         file_client_fut = self.overlay_1._accept_client(self.incoming_client_1)
         self.loop.run_until_complete(file_client_fut)
         file_client_peer, run_callback = file_client_fut.result()
         assert file_client_peer.id == "2"
         self.overlay_1.file_clients.keys() == ["2"]
-        assert self.overlay_1.file_clients["2"].address == self.incoming_client_1.address
+        assert self.overlay_1.file_clients["2"].address == \
+               self.incoming_client_1.address
         assert list(self.overlay_1.unbound_file_clients.keys()) == ["2"]
 
     def test_file_client_bound(self):
@@ -80,18 +89,22 @@ class TestOverlay:
         peer, run_callback = peer_fut.result()
         assert peer.id == "2"
         assert list(self.overlay_1.peers.keys()) == ["2"]
-        assert self.overlay_1.peers["2"].address == self.incoming_client_1.address
+        assert self.overlay_1.peers["2"].address == \
+               self.incoming_client_1.address
 
-        self.incoming_client_1.recvdata.return_value = cfr((8002, overlay.Overlay.ConnectionType.FILE_CLIENT))
+        self.incoming_client_1.recvdata.return_value = \
+            cfr((8002, overlay.Overlay.ConnectionType.FILE_CLIENT))
 
         file_client_fut = self.overlay_1._accept_client(self.incoming_client_1)
         self.loop.run_until_complete(file_client_fut)
         file_client_peer, run_callback = file_client_fut.result()
         assert file_client_peer.id == "2"
         self.overlay_1.file_clients.keys() == ["2"]
-        assert self.overlay_1.file_clients["2"].address == self.incoming_client_1.address
+        assert self.overlay_1.file_clients["2"].address == \
+               self.incoming_client_1.address
 
-        assert self.overlay_1.peers["2"].file_client == self.overlay_1.file_clients["2"]
+        assert self.overlay_1.peers["2"].file_client == \
+               self.overlay_1.file_clients["2"]
         assert list(self.overlay_1.unbound_file_clients.keys()) == []
 
 
@@ -100,29 +113,36 @@ class TestOverlay:
         self.loop.run_until_no_events()
         incoming_peer, run_callback = incoming_peer_fut.result()
         assert incoming_peer.id == "2"
-        assert self.overlay_1.peers["2"].address == self.incoming_client_1.address
+        assert self.overlay_1.peers["2"].address == \
+               self.incoming_client_1.address
 
     def test_accept_lower_outgoing(self):
-        outgoing_peer_fut = self.overlay_1._accept_client(self.outgoing_client_1)
+        outgoing_peer_fut = self.overlay_1._accept_client(
+            self.outgoing_client_1)
         self.overlay_1._accept_client(self.incoming_client_1)
         self.loop.run_until_no_events()
         outgoing_peer, run_callback = outgoing_peer_fut.result()
         assert outgoing_peer.id == "2"
-        assert self.overlay_1.peers["2"].address == self.incoming_client_1.address
+        assert self.overlay_1.peers["2"].address == \
+               self.incoming_client_1.address
 
     def test_accept_higher_incoming(self):
-        incoming_peer_fut = self.overlay_2._accept_client(self.incoming_client_2)
+        incoming_peer_fut = self.overlay_2._accept_client(
+            self.incoming_client_2)
         self.loop.run_until_no_events()
         incoming_peer, run_callback = incoming_peer_fut.result()
         assert incoming_peer.id == "1"
-        assert self.overlay_2.peers["1"].address == self.outgoing_client_2.address
+        assert self.overlay_2.peers["1"].address == \
+               self.outgoing_client_2.address
 
     def test_accept_higher_outgoing(self):
-        outgoing_peer_fut = self.overlay_2._accept_client(self.outgoing_client_2)
+        outgoing_peer_fut = self.overlay_2._accept_client(
+            self.outgoing_client_2)
         self.loop.run_until_no_events()
         outgoing_peer, run_callback = outgoing_peer_fut.result()
         assert outgoing_peer.id == "1"
-        assert self.overlay_2.peers["1"].address == self.outgoing_client_2.address
+        assert self.overlay_2.peers["1"].address == \
+               self.outgoing_client_2.address
 
     def test_connect_with_retries(self):
         self.overlay_1.retry_wait = 0
@@ -134,7 +154,8 @@ class TestOverlay:
         connect_side_effects = [connection_refused_fut, connection_refused_fut,
                                 client_fut,             connection_refused_fut,
                                                         client_fut]
-        self.overlay_1.network.connect.side_effect = lambda address: connect_side_effects.pop(0)
+        self.overlay_1.network.connect.side_effect = \
+            lambda address: connect_side_effects.pop(0)
 
         connect_fut = self.overlay_1._connect_with_retries(("127.0.0.1", 8002))
         self.loop.run_until_complete(connect_fut)
@@ -149,11 +170,13 @@ class TestIntegration:
         asyncio.set_event_loop(self.loop)
 
         self.network_1 = net.Network()
-        self.overlay_1 = overlay.Overlay("1", 8001, self.network_1, self.overlay1_peer_accepted_cb)
+        self.overlay_1 = overlay.Overlay("1", 8001, self.network_1,
+                                         self.overlay1_peer_accepted_cb)
         self.overlay_1.retry_wait = 0.1
 
         self.network_2 = net.Network()
-        self.overlay_2 = overlay.Overlay("2", 8002, self.network_2, self.overlay2_peer_accepted_cb)
+        self.overlay_2 = overlay.Overlay("2", 8002, self.network_2,
+                                         self.overlay2_peer_accepted_cb)
         self.overlay_2.retry_wait = 0.1
 
         self.overlay_1_accepted_peers = [asyncio.Future()]
@@ -170,10 +193,14 @@ class TestIntegration:
         self.overlay_2_accepted_peers.append(asyncio.Future())
 
     def overlay_1_num_accepted_peers(self):
-        return len([1 for peer_fut in self.overlay_1_accepted_peers if peer_fut.done()])
+        return len(
+            [1 for peer_fut in self.overlay_1_accepted_peers if peer_fut.done()]
+        )
 
     def overlay_2_num_accepted_peers(self):
-        return len([1 for peer_fut in self.overlay_2_accepted_peers if peer_fut.done()])
+        return len(
+            [1 for peer_fut in self.overlay_2_accepted_peers if peer_fut.done()]
+        )
 
     def teardown_method(self, method):
         self.overlay_1.stop()
@@ -182,10 +209,10 @@ class TestIntegration:
 
     def test_connect(self):
         overlay_1_listen_fut = self.overlay_1.listen()
-        self.loop.run_until_complete(overlay_1_listen_fut, raise_exceptions=True)
+        self.loop.run_until_complete(overlay_1_listen_fut)
 
         overlay_2_listen_fut = self.overlay_2.listen()
-        self.loop.run_until_complete(overlay_2_listen_fut, raise_exceptions=True)
+        self.loop.run_until_complete(overlay_2_listen_fut)
 
         assert overlay_1_listen_fut.done()
         assert overlay_2_listen_fut.done()
@@ -219,7 +246,6 @@ class TestIntegration:
         self.loop.run_until_complete(overlay_1_peer_fut, raise_exceptions=False)
         self.loop.run_until_complete(overlay_2_peer_fut, raise_exceptions=False)
 
-
         assert list(self.overlay_1.peers.keys()) == ["2"]
         assert list(self.overlay_2.peers.keys()) == ["1"]
         assert self.overlay_1_num_accepted_peers() == 0
@@ -227,10 +253,10 @@ class TestIntegration:
 
     def test_transfer_data_and_file(self, tmpdir):
         overlay_1_listen_fut = self.overlay_1.listen()
-        self.loop.run_until_complete(overlay_1_listen_fut, raise_exceptions=True)
+        self.loop.run_until_complete(overlay_1_listen_fut)
 
         overlay_2_listen_fut = self.overlay_2.listen()
-        self.loop.run_until_complete(overlay_2_listen_fut, raise_exceptions=True)
+        self.loop.run_until_complete(overlay_2_listen_fut)
 
         assert overlay_1_listen_fut.done()
         assert overlay_2_listen_fut.done()
@@ -258,9 +284,9 @@ class TestIntegration:
         with patch('tempfile.TemporaryFile', new_callable=testutils.FakeFile):
             recvfile_fut = self.overlay_2.peers["1"].recvfile()
             self.loop.run_until_complete(recvfile_fut)
-            received_file, recevied_metadata = recvfile_fut.result()
+            received_file, received_metadata = recvfile_fut.result()
             assert received_file.read() == b"File content!"
-            assert recevied_metadata == b"Some metadata"
+            assert received_metadata == b"Some metadata"
 
         self.overlay_1.peers["2"].sendmessage(b"Hello!")
         recvmessage_fut = self.overlay_2.peers["1"].recvmessage()

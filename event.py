@@ -14,8 +14,10 @@ class EventType(object):
         FETCH: [('source_path', 's')],
         CREATE: [('source_path', 's'), ('is_directory', '?')],
         DELETE: [('source_path', 's'), ('is_directory', '?')],
-        MODIFY: [('source_path', 's'), ('size', 'I'), ('hash', 's'), ('modified_date', 'd')],
-        MOVE: [('source_path', 's'), ('destination_path', 's'), ('is_directory', '?')]
+        MODIFY: [('source_path', 's'), ('size', 'I'), ('hash', 's'),
+                 ('modified_date', 'd')],
+        MOVE: [('source_path', 's'), ('destination_path', 's'),
+               ('is_directory', '?')]
     }
 
     header = "!BB"
@@ -29,7 +31,8 @@ class EventType(object):
                  for event_type, pack_format_ in
                  zip(list(fields.keys()), [pack_format] * len(fields))}
 
-    type = {id: namedtuple("Event%s" % id, ['type', 'sync_point'] + [field_name for field_name, field_type in fields_])
+    type = {id: namedtuple("Event%s" % id, ['type', 'sync_point'] +
+                           [field_name for field_name, field_type in fields_])
             for id, fields_ in list(fields.items())}
 
     @staticmethod
@@ -43,7 +46,9 @@ class EventType(object):
                 string = getattr(evt, field_name)
                 pack.append(len(string))
                 strings.append(string)
-        return struct.pack(EventType.header + EventType.pack_format[evt.type], *pack) + b"".join([string.encode("utf-8") for string in strings])
+        return struct.pack(EventType.header +
+                           EventType.pack_format[evt.type], *pack) + \
+            b"".join([string.encode("utf-8") for string in strings])
 
     @staticmethod
     def deserialize(msg):

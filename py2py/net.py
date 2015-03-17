@@ -15,7 +15,9 @@ class Client(object):
         self.is_outgoing = is_outgoing
 
     def __repr__(self):
-        return "%s(%s, %s)" % (self.__class__.__name__, self.address, "out" if self.is_outgoing else "in")
+        return "%s(%s, %s)" % (self.__class__.__name__,
+                               self.address,
+                               "out" if self.is_outgoing else "in")
 
     def close(self):
         self.writer.close()
@@ -106,8 +108,9 @@ class Network(object):
         return self._create_client(reader, writer, True)
 
     def _create_client(self, reader, writer, is_outgoing):
-        client = Client(writer.transport.get_extra_info('peername'), reader, writer, is_outgoing)
-        self.clients[((reader, writer))] = client
+        client = Client(writer.transport.get_extra_info('peername'),
+                        reader, writer, is_outgoing)
+        self.clients[(reader, writer)] = client
         return client
 
     def _connection_accepted_cb(self, reader, writer):

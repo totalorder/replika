@@ -1,6 +1,7 @@
 # encoding: utf-8
 from event import EventType
 
+
 class TestEvent:
     def setup_method(self, method):
         pass
@@ -10,7 +11,8 @@ class TestEvent:
 
     def test_serialize_event(self):
         evt = EventType.create(EventType.FETCH, "sync_point", "source_path")
-        assert EventType.serialize(evt) == b"\x00\n\x00\x0bsync_pointsource_path"
+        assert EventType.serialize(evt) == \
+            b"\x00\n\x00\x0bsync_pointsource_path"
 
     def test_deserialize_event(self):
         evt = EventType.deserialize(b"\x00\n\x00\x0bsync_pointsource_path")

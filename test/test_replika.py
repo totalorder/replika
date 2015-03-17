@@ -17,22 +17,25 @@ class TestPeer:
 
         self.incoming_messages = queue.Queue()
         self.overlay_peer_mock = mock.Mock(spec=overlay.Peer)
-        self.peer = replika.Peer("ring0", self.overlay_peer_mock, self.incoming_messages)
+        self.peer = replika.Peer("ring0", self.overlay_peer_mock,
+                                 self.incoming_messages)
         self.receieved_files = []
         self.overlay_peer_mock.sendfile.side_effect = \
             lambda file, metadata: self.receieved_files.append((file, metadata))
-        self.overlay_peer_mock.recvfile.side_effect = lambda: cfr(self.receieved_files.pop(-1))
+        self.overlay_peer_mock.recvfile.side_effect = \
+            lambda: cfr(self.receieved_files.pop(-1))
         self.overlay_peer_mock.id = "2"
-        self.open_patcher = mock.patch('replika.open', mock.Mock(spec=open), create=True)
+        self.open_patcher = mock.patch('replika.open',
+                                       mock.Mock(spec=open), create=True)
         self.open_mock = self.open_patcher.start()
         fake_file = BytesIO()
         fake_file.write(b"file_content")
         fake_file.seek(0)
         self.open_mock.return_value = fake_file
         self.file_time = time.time()
-        self.getmtime_patcher = mock.patch('os.path.getmtime', lambda x: self.file_time)
+        self.getmtime_patcher = mock.patch('os.path.getmtime',
+                                           lambda x: self.file_time)
         self.getmtime_patcher.start()
-
 
     def teardown_method(self, method):
         self.open_patcher.stop()

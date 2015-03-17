@@ -15,12 +15,14 @@ def create_start_server_side_effect(loop=None):
         loop = asyncio.get_event_loop()
     # loop is shadowed in the inner function
     outer_loop = loop
+
     @asyncio.coroutine
     def start_server_side_effect(client_connected_cb, host=None, port=None, *,
                                  loop=None, limit=None, **kwds):
         def client_connected_event():
             stream_writer_mock = Mock(spec=asyncio.streams.StreamWriter)
-            stream_writer_mock.transport.get_extra_info.return_value = ('127.0.0.1', 8001)
+            stream_writer_mock.transport.get_extra_info.return_value = \
+                ('127.0.0.1', 8001)
             client_connected_cb(Mock(spec=asyncio.streams.StreamReader),
                                 stream_writer_mock)
         outer_loop.call_soon(client_connected_event)
@@ -88,10 +90,12 @@ class TestNetwork:
         self.loop.close()
 
     def test_client_accepted_cb_called_on_listen(self):
-        self.asyncio_start_server_mock.side_effect = create_start_server_side_effect()
+        self.asyncio_start_server_mock.side_effect = \
+            create_start_server_side_effect()
 
         self.called = []
-        self.set_client_accepted_cb(lambda *args, **kwargs: self.called.append((args, kwargs)))
+        self.set_client_accepted_cb(
+            lambda *args, **kwargs: self.called.append((args, kwargs)))
         self.network.listen(("127.0.0.1", 8000))
         self.loop.run_until_no_events()
         assert len(self.called) == 1
@@ -102,20 +106,23 @@ class TestNetwork:
 
     def test_recv_data(self):
         reader_mock = Mock(spec=asyncio.streams.StreamReader)
-        self.asyncio_open_connection_mock.side_effect = create_open_connection_side_effect(reader_mock)
+        self.asyncio_open_connection_mock.side_effect = \
+            create_open_connection_side_effect(reader_mock)
         reader_mock.read.return_value = cfr(b"Hello bytes!")
         client = gfr(self.network.connect(("127.0.0.1", 8000)))
         assert gfr(client.recv()) == b"Hello bytes!"
 
     def test_connect(self):
-        self.asyncio_open_connection_mock.side_effect = create_open_connection_side_effect()
+        self.asyncio_open_connection_mock.side_effect = \
+            create_open_connection_side_effect()
         client_fut = self.network.connect(("127.0.0.1", 8001))
         self.loop.run_until_no_events()
         assert client_fut.done()
         assert client_fut.result().address == ("127.0.0.1", 8001)
 
     def test_failed_connect(self):
-        self.asyncio_open_connection_mock.side_effect = create_open_connection_side_effect(fail=True)
+        self.asyncio_open_connection_mock.side_effect = \
+            create_open_connection_side_effect(fail=True)
         client_fut = self.network.connect(("127.0.0.1", 8001))
         self.loop.run_until_no_events(raise_exceptions=False)
         with pytest.raises(ConnectionError) as excinfo:
@@ -126,21 +133,26 @@ class TestClient:
     def setup_method(self, method):
         self.loop = testutils.TestLoop()
         asyncio.set_event_loop(self.loop)
-        sender_writer_transport_mock = Mock(spec=asyncio.transports.WriteTransport)
+        sender_writer_transport_mock = \
+            Mock(spec=asyncio.transports.WriteTransport)
         self.sender = net.Client(("127.0.0.1", 8000),
                                  asyncio.streams.StreamReader(),
                                  asyncio.streams.StreamWriter(
-                                     sender_writer_transport_mock, None, None, None),
+                                     sender_writer_transport_mock, None, None,
+                                     None),
                                  True)
 
         receiver_stream_reader = asyncio.streams.StreamReader()
         self.receiver = net.Client(("127.0.0.1", 8001),
                                    receiver_stream_reader,
                                    asyncio.streams.StreamWriter(
-                                       Mock(spec=asyncio.transports.WriteTransport), None, None, None),
+                                       Mock(spec=
+                                            asyncio.transports.WriteTransport),
+                                       None, None, None),
                                    False)
 
-        sender_writer_transport_mock.write.side_effect = lambda data: receiver_stream_reader.feed_data(data)
+        sender_writer_transport_mock.write.side_effect = \
+            lambda data: receiver_stream_reader.feed_data(data)
 
     def teardown_method(self, method):
         self.loop.close()
@@ -178,9 +190,9 @@ class TestClient:
             self.loop.run_until_complete(send_done)
 
         with patch('tempfile.TemporaryFile', new_callable=testutils.FakeFile):
-            received_file, recevied_metadata = gfr(self.receiver.recvfile())
+            received_file, received_metadata = gfr(self.receiver.recvfile())
             assert received_file.read() == file_content
-            assert recevied_metadata == metadata
+            assert received_metadata == metadata
 
     def test_recvbytes_async(self):
         bytes_fut = self.receiver.recvbytes(12)
@@ -289,6 +301,6 @@ class TestIntegration:
         with patch('tempfile.TemporaryFile', new_callable=testutils.FakeFile):
             recvfile_fut = self.receiving_client.recvfile()
             self.loop.run_until_complete(recvfile_fut)
-            received_file, recevied_metadata = recvfile_fut.result()
+            received_file, received_metadata = recvfile_fut.result()
             assert received_file.read() == b"File content!"
-            assert recevied_metadata == b"Some metadata"
+            assert received_metadata == b"Some metadata"

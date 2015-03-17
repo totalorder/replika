@@ -43,12 +43,16 @@ class TestLoop(asyncio.get_event_loop().__class__):
     def _no_events(self):
         listening_fds = len(self._selector.get_map()) - self._internal_fds
 
-        tasks_not_done = [task for task in asyncio.tasks.Task.all_tasks(self) if not task.done()]
+        tasks_not_done = [task for task in asyncio.tasks.Task.all_tasks(self)
+                          if not task.done()]
 
-        if self._raise_fut_exceptions and not tasks_not_done:  # Trigger exceptions
-            [task.result() for task in asyncio.tasks.Task.all_tasks(self) if task.done()]
+        # Trigger exceptions
+        if self._raise_fut_exceptions and not tasks_not_done:
+            [task.result() for task in asyncio.tasks.Task.all_tasks(self)
+             if task.done()]
 
-        if self._stop_if_no_events and not self._scheduled and not self._ready and not tasks_not_done \
+        if self._stop_if_no_events and not self._scheduled \
+                and not self._ready and not tasks_not_done \
                 and listening_fds == 0:
             return True
 

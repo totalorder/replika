@@ -17,7 +17,9 @@ class SyncPoint(object):
         self.send_event = send_event
         self.send_file = send_file
         self.logger = HierarchyLogger(lambda: "SyncPoint %s" % self.id, logger)
-        self.remote_handler = RemoteEventHandler(mount_path, self.send_event, self._send_file, self.signal, logger)
+        self.remote_handler = RemoteEventHandler(mount_path, self.send_event,
+                                                 self._send_file, self.signal,
+                                                 logger)
         self.outstanding_events = defaultdict(list)
 
     def signal(self, source_path, event_type):
@@ -29,7 +31,8 @@ class SyncPoint(object):
 
     def _send_event(self, evt):
         if evt.type in self.outstanding_events[evt.source_path]:
-            self.logger.info("Filtered out evt %s because %s", evt, self.outstanding_events[evt.source_path])
+            self.logger.info("Filtered out evt %s because %s", evt,
+                             self.outstanding_events[evt.source_path])
             self.outstanding_events[evt.source_path].remove(evt.type)
         else:
             self.send_event(evt)
@@ -38,8 +41,10 @@ class SyncPoint(object):
         if self.started:
             return False
         else:
-            event_handler = ReplikaFileSystemEventHandler(self.id, self.mount_path, self._send_event)
-            self.watch = observer.schedule(event_handler, self.mount_path, recursive=True)
+            event_handler = ReplikaFileSystemEventHandler(
+                self.id, self.mount_path, self._send_event)
+            self.watch = observer.schedule(event_handler, self.mount_path,
+                                           recursive=True)
             self.logger.info("Observing directory: %s", self.mount_path)
             return True
 
@@ -81,7 +86,12 @@ class RemoteEventHandler(object):
                 self.signal(evt.source_path, EventType.CREATE)
                 makedirs(source_path)
         else:
-            self.send_event(EventType.create(EventType.FETCH, evt.sync_point, evt.source_path), sender)
+            self.send_event(
+                EventType.create(
+                    EventType.FETCH,
+                    evt.sync_point,
+                    evt.source_path),
+                sender)
 
     def on_delete(self, evt, sender):
         self.logger.info("DELETE %s from %s", evt, sender)
@@ -99,9 +109,15 @@ class RemoteEventHandler(object):
         source_path = jn(self.mount_point, evt.source_path)
         source_exists = exists(source_path)
         if not source_exists or get_file_hash(source_path) != evt.hash:
-            self.send_event(EventType.create(EventType.FETCH, evt.sync_point, evt.source_path), sender)
+            self.send_event(
+                EventType.create(
+                    EventType.FETCH,
+                    evt.sync_point,
+                    evt.source_path),
+                sender)
         else:
-            self.logger.info("Skipping equal file %s - %s", evt.sync_point, evt.source_path)
+            self.logger.info("Skipping equal file %s - %s", evt.sync_point,
+                             evt.source_path)
 
     def on_move(self, evt, sender):
         self.logger.info("MOVE %s from %s", evt, sender)

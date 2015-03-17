@@ -31,7 +31,8 @@ class Peer:
     @asyncio.coroutine
     def _recvmessage(self):
         message = yield from self.overlay_peer.recvmessage()
-        self.incoming_messages.put((self.MessageReceivedType.MESSAGE, self.ident, message))
+        self.incoming_messages.put(
+            (self.MessageReceivedType.MESSAGE, self.ident, message))
         asyncio.async(self._recvmessage())
 
     def __repr__(self):
@@ -48,7 +49,8 @@ class Peer:
     def sendfile(self, sync_point, mount_path, path):
         full_path = jn(mount_path, path)
 
-        sync_point = struct.pack("!I", len(sync_point)) + sync_point.encode('utf-8')
+        sync_point = struct.pack("!I",
+                                 len(sync_point)) + sync_point.encode('utf-8')
         path = struct.pack("!I", len(path)) + path.encode('utf-8')
         file_time = struct.pack("!d", os.path.getmtime(full_path))
         metadata = sync_point + path + file_time
@@ -66,7 +68,9 @@ class Peer:
         file_time, _ = self._unpackdata("d", metadata, pos)
         file_time = file_time[0]
 
-        self.incoming_messages.put((self.MessageReceivedType.FILE, self.overlay_peer.id, (file, sync_point, path, file_time)))
+        self.incoming_messages.put((self.MessageReceivedType.FILE,
+                                    self.overlay_peer.id,
+                                    (file, sync_point, path, file_time)))
         asyncio.async(self._recvfile())
 
     def _unpackmessage(self, message, pos):
@@ -95,7 +99,8 @@ class Client(async.FlightControl, threading.Thread):
         self.observer = Observer()
         self.running = False
         self.logger = HierarchyLogger(lambda: "Client %s" % self.id)
-        self.overlay = overlay.Overlay(self.id, 5000 + int(self.id), net.Network(), self.accept_peer)
+        self.overlay = overlay.Overlay(self.id, 5000 + int(self.id),
+                                       net.Network(), self.accept_peer)
         self.received_messages = queue.Queue()
         self.peers_to_add = queue.Queue()
         self.loop = None
@@ -109,7 +114,8 @@ class Client(async.FlightControl, threading.Thread):
 
     @async.task
     def accept_peer(self, overlay_peer):
-        existing_peer = [peer for peer in self.peers.values() if peer.overlay_peer == overlay_peer]
+        existing_peer = [peer for peer in self.peers.values()
+                         if peer.overlay_peer == overlay_peer]
         if existing_peer:
             print(self.id, "overlay_peer already connected", overlay_peer.id)
             return existing_peer[0]
@@ -155,7 +161,8 @@ class Client(async.FlightControl, threading.Thread):
         if self.running:
             self.running = False
             self.logger.info("Stopping client")
-            [self.overlay.disconnect_peer(peer.overlay_peer) for peer in list(self.peers.values())]
+            [self.overlay.disconnect_peer(peer.overlay_peer) for peer
+             in list(self.peers.values())]
             self.observer.stop()
             self.observer.join()
             self.overlay.stop()
@@ -167,7 +174,8 @@ class Client(async.FlightControl, threading.Thread):
 
     @async.task
     def _add_peer(self, address):
-        existing_peer = [peer for peer in self.peers.values() if peer.address == address]
+        existing_peer = [peer for peer in self.peers.values()
+                         if peer.address == address]
         if existing_peer:
             print(self.id, "address already connected", address)
             return existing_peer[0]
@@ -182,7 +190,8 @@ class Client(async.FlightControl, threading.Thread):
         return peer
 
     def _get_sync_point_info(self):
-        return {sync_point.id: sync_point.mount_path for sync_point in list(self.sync_points.values())}
+        return {sync_point.id: sync_point.mount_path for sync_point
+                in list(self.sync_points.values())}
 
     def _signal(self, sync_point, source_path, event_type):
         self.sync_points[sync_point].signal(source_path, event_type)
@@ -199,13 +208,16 @@ class Client(async.FlightControl, threading.Thread):
 
         while 1:
             try:
-                received_message_type, peer_id, message = self.received_messages.get_nowait()
+                received_message_type, peer_id, message = \
+                    self.received_messages.get_nowait()
                 if received_message_type == Peer.MessageReceivedType.MESSAGE:
                     evt = EventType.deserialize(message)
                     if evt.sync_point in self.sync_points:
                         self.sync_points[evt.sync_point].on_event(evt, peer_id)
                     else:
-                        self.logger.warn("Received unknown sync point from %s: %s", peer_id, message)
+                        self.logger.warn(
+                            "Received unknown sync point from %s: %s", peer_id,
+                            message)
                 elif received_message_type == Peer.MessageReceivedType.FILE:
                     file, sync_point, path, file_time = message
                     self._receive_file(file, sync_point, path, file_time)
@@ -234,19 +246,23 @@ class Client(async.FlightControl, threading.Thread):
             self.peers[recipient].send_event(evt)
 
     def _send_file(self, sync_point, path, recipient):
-        self.peers[recipient].sendfile(sync_point, self.sync_points[sync_point].mount_path, path)
+        self.peers[recipient].sendfile(
+            sync_point, self.sync_points[sync_point].mount_path, path)
 
     def create_sync_point(self, id, mount_path):
         if id in self.sync_points:
             if self.sync_points[id].mount_path != mount_path:
-                self.logger.warn("SyncPoint already exists for id %s with mount %s, cannot create at mount %s",
-                                 id, self.sync_points[id].mount_path, mount_path)
+                self.logger.warn("SyncPoint already exists for id %s with "
+                                 "mount %s, cannot create at mount %s",
+                                 id, self.sync_points[id].mount_path,
+                                 mount_path)
                 raise Exception("SyncPoint already exists")
             else:
                 self.logger.warn("SyncPoint already exists for id %s", id)
                 raise Exception("SyncPoint already exists")
         else:
-            sync_point = SyncPoint(id, mount_path, self._send_event, self._send_file, self.logger)
+            sync_point = SyncPoint(id, mount_path, self._send_event,
+                                   self._send_file, self.logger)
             self.sync_points[sync_point.id] = sync_point
             sync_point.start(self.observer)
             return self.sync_points[sync_point.id]
@@ -267,7 +283,8 @@ if __name__ == "__main__":
         clients.append(client)
 
     for client in clients:
-        client.add_peer(("localhost", 5000 + int(random.choice([c for c in clients if c != client]).id)))
+        client.add_peer(("localhost", 5000 + int(random.choice(
+            [c for c in clients if c != client]).id)))
 
     print("Replika started!")
     try:

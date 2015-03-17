@@ -60,11 +60,13 @@ class TestAsyncIO:
         def client_connected_handler(client_reader, client_writer):
             self.result.append("Connection accepted")
 
-        server_task = asyncio.async(asyncio.start_server(client_connected_handler, 'localhost', 2222))
+        server_task = asyncio.async(
+            asyncio.start_server(client_connected_handler, 'localhost', 2222))
 
         @asyncio.coroutine
         def connect_to_server():
-            reader, writer = yield from asyncio.open_connection('localhost', 2222)
+            reader, writer = yield from asyncio.open_connection('localhost',
+                                                                2222)
             self.result.append("Client connected")
             writer.transport.close()
             server_task.result().close()
