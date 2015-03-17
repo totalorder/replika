@@ -31,8 +31,8 @@ class Peer:
     @asyncio.coroutine
     def _recvmessage(self):
         message = yield from self.overlay_peer.recvmessage()
-        self.incoming_messages.put((self.MessageReceivedType.MESSAGE, self.overlay_peer.id, message))
-        asyncio.async(self._recvmessage)
+        self.incoming_messages.put((self.MessageReceivedType.MESSAGE, self.ident, message))
+        asyncio.async(self._recvmessage())
 
     def __repr__(self):
         return "%s(%s)" % (self.__class__.__name__, self.ident)
@@ -43,7 +43,6 @@ class Peer:
 
     def send_event(self, evt):
         msg = EventType.serialize(evt)
-        print("send_event")
         self.overlay_peer.sendmessage(msg)
 
     def sendfile(self, sync_point, mount_path, path):
@@ -51,7 +50,7 @@ class Peer:
 
         sync_point = struct.pack("!I", len(sync_point)) + sync_point.encode('utf-8')
         path = struct.pack("!I", len(path)) + path.encode('utf-8')
-        file_time = struct.pack("I", os.path.getmtime(full_path))
+        file_time = struct.pack("!d", os.path.getmtime(full_path))
         metadata = sync_point + path + file_time
 
         file = open(full_path, 'rb')
@@ -61,21 +60,28 @@ class Peer:
     def _recvfile(self):
         file, metadata = yield from self.overlay_peer.recvfile()
         sync_point, pos = self._unpackmessage(metadata, 0)
+        sync_point = sync_point.decode('utf-8')
         path, pos = self._unpackmessage(metadata, pos)
-        file_time, _ = self._unpackdata("I", metadata, pos)
+        path = path.decode('utf-8')
+        file_time, _ = self._unpackdata("d", metadata, pos)
+        file_time = file_time[0]
 
         self.incoming_messages.put((self.MessageReceivedType.FILE, self.overlay_peer.id, (file, sync_point, path, file_time)))
-        asyncio.async(self._recvfile)
+        asyncio.async(self._recvfile())
 
     def _unpackmessage(self, message, pos):
+        num = struct.unpack("!I", message[pos:pos + 4])[0]
         pos += 4
-        num = struct.unpack("!I", message[:pos])[0]
         return message[pos:pos + num], pos + num
 
     def _unpackdata(self, format, data, pos):
         struct_size = struct.calcsize(format)
         chunk = data[pos:pos + struct_size]
         return struct.unpack("!" + format, chunk), pos + struct_size
+
+    def listen(self):
+        asyncio.async(self._recvmessage())
+        asyncio.async(self._recvfile())
 
 
 class Client(async.FlightControl, threading.Thread):
@@ -103,6 +109,11 @@ class Client(async.FlightControl, threading.Thread):
 
     @async.task
     def accept_peer(self, overlay_peer):
+        existing_peer = [peer for peer in self.peers.values() if peer.overlay_peer == overlay_peer]
+        if existing_peer:
+            print(self.id, "overlay_peer already connected", overlay_peer.id)
+            return existing_peer[0]
+
         if overlay_peer not in self.flight:
             with self.flight_control(overlay_peer) as plane:
                 print(self.id, "accept_peer START", id(overlay_peer))
@@ -116,6 +127,7 @@ class Client(async.FlightControl, threading.Thread):
                 self.peers[peer.ident] = peer
                 print(self.id, "accept_peer END", id(overlay_peer))
                 plane.set_result(peer)
+                peer.listen()
         else:
             peer = yield from self.landed_flight(overlay_peer)
 
@@ -186,12 +198,12 @@ class Client(async.FlightControl, threading.Thread):
                 break
 
         while 1:
-            print("process message")
             try:
                 received_message_type, peer_id, message = self.received_messages.get_nowait()
                 if received_message_type == Peer.MessageReceivedType.MESSAGE:
-                    if message.sync_point in self.sync_points:
-                        self.sync_points[message.sync_point].on_event(message, peer_id)
+                    evt = EventType.deserialize(message)
+                    if evt.sync_point in self.sync_points:
+                        self.sync_points[evt.sync_point].on_event(evt, peer_id)
                     else:
                         self.logger.warn("Received unknown sync point from %s: %s", peer_id, message)
                 elif received_message_type == Peer.MessageReceivedType.FILE:
