@@ -199,7 +199,6 @@ class TestIntegration:
         assert self.overlay_2.peers["1"].address == ("127.0.0.1", 8001)
         assert self.overlay_2.peers["1"].file_client.id == "1"
 
-
     def test_connect_both_ways(self):
         overlay_1_peer_fut = self.overlay_1.add_peer(("127.0.0.1", 8002))
         overlay_2_peer_fut = self.overlay_2.add_peer(("127.0.0.1", 8001))
@@ -207,14 +206,11 @@ class TestIntegration:
         overlay_2_listen_fut = self.overlay_2.listen()
         overlay_1_listen_fut = self.overlay_1.listen()
 
-        self.loop.run_until_complete(overlay_1_peer_fut)
-        self.loop.run_until_complete(overlay_2_peer_fut)
-
         self.loop.run_until_complete(overlay_2_listen_fut)
         self.loop.run_until_complete(overlay_1_listen_fut)
 
-        assert list(self.overlay_2.peers.keys()) == ["1"]
-        assert list(self.overlay_1.peers.keys()) == ["2"]
+        self.loop.run_until_complete(overlay_1_peer_fut, raise_exceptions=False)
+        self.loop.run_until_complete(overlay_2_peer_fut, raise_exceptions=False)
 
     def test_transfer_data_and_file(self, tmpdir):
         overlay_1_listen_fut = self.overlay_1.listen()

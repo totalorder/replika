@@ -18,6 +18,7 @@ def get_future_result(future, loop=None):
 
 class TestLoop(asyncio.get_event_loop().__class__):
     def __init__(self, *args, **kwargs):
+        self.set_debug(True)
         super().__init__(*args, **kwargs)
         self._stop_if_no_events = False
         self._raise_fut_exceptions = False
@@ -52,7 +53,7 @@ class TestLoop(asyncio.get_event_loop().__class__):
             return True
 
     def _run_once(self):
-        print("==>")
+        #print("==>")
         super()._run_once()
 
         if self._no_events():

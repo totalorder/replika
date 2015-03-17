@@ -59,7 +59,7 @@ class Overlay(object):
         self.retry_wait = 5
         self.reverse_direction_client_futs = {}
         self.reverse_direction_file_client_futs = {}
-        self.connections_in_progress = []
+        self.connections_in_progress = {}
 
     def client_accepted_cb(self, client):
         accept_client_fut = self._accept_client(client)
@@ -125,8 +125,10 @@ class Overlay(object):
             existing_peers = self.peers
             reverse_direction_futs = self.reverse_direction_file_client_futs
 
+        fc = "fileclient" if is_file_client else "peer"
         run_callback = not is_file_client
         if not peer.is_outgoing and peer.id in reverse_direction_futs and peer.id not in existing_peers:
+            print(self.id, fc, "received reverse: ", peer.id, "(accept)", peer.reader._transport._sock_fd)
             run_callback = False
             existing_peers[peer.id] = peer
             self._bind_file_client(peer, is_file_client)
@@ -136,22 +138,28 @@ class Overlay(object):
         elif peer.id not in existing_peers:
             if not peer.is_outgoing:
                 if peer.id > self.id:
+                    print(self.id, fc, "received > incoming:", peer.id, "(accept)", peer.reader._transport._sock_fd)
                     existing_peers[peer.id] = peer
                     self._bind_file_client(peer, is_file_client)
                     resulting_peer = peer
                 else:
-                    peer.close()
+                    print(self.id, fc, "received < incoming:", peer.id, "(close + connect)", peer.reader._transport._sock_fd)
+                    self.network.disconnect_client(peer)
                     resulting_peer = yield from self.add_peer(peer.address)
             else:
                 if self.id > peer.id:
+                    print(self.id, fc, "received > outgoing:", peer.id, "(connect)", peer.reader._transport._sock_fd)
                     existing_peers[peer.id] = peer
                     self._bind_file_client(peer, is_file_client)
                     resulting_peer = peer
                 else:
+                    print(self.id, fc, "received < outgoing:", peer.id, "(nothing + yield reverse)", peer.reader._transport._sock_fd)
+                    self.network.disconnect_client(peer)
                     reverse_direction_fut = asyncio.Future()
                     reverse_direction_futs[peer.id] = reverse_direction_fut
                     resulting_peer = yield from reverse_direction_fut
         else:
+            print(self.id, fc, "existing", "outgoing" if peer.is_outgoing else "incoming", "(close)", peer.reader._transport._sock_fd)
             self.network.disconnect_client(peer)
             resulting_peer = existing_peers[peer.id]
             run_callback = False
@@ -190,14 +198,19 @@ class Overlay(object):
 
     @async.task
     def add_peer(self, address):
-        self.connections_in_progress.append(address)
-        client, file_client = yield from self._connect_with_retries(address)
+        if address not in self.connections_in_progress:
+            fut = asyncio.futures.Future()
+            self.connections_in_progress[address] = fut
+            client, file_client = yield from self._connect_with_retries(address)
 
-        yield from self._accept_client(file_client, file_client=True)
+            yield from self._accept_client(file_client, file_client=True)
 
-        peer, _ = yield from self._accept_client(client)
-        self.connections_in_progress.remove(address)
-        return peer
+            peer, _ = yield from self._accept_client(client)
+            fut.set_result(peer)
+            del self.connections_in_progress[address]
+            return peer
+        else:
+            return (yield from self.connections_in_progress[address])
 
     @async.task
     def listen(self):
@@ -206,3 +219,9 @@ class Overlay(object):
 
     def stop(self):
         self.network.stop()
+
+    def disconnect_peer(self, peer):
+        if peer.file_client:
+            self.network.disconnect_client(peer.file_client)
+        self.network.disconnect_client(peer)
+        del self.peers[peer.id]
