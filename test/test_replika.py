@@ -4,6 +4,7 @@ from io import BytesIO
 import queue
 from unittest import mock
 import time
+from event import EventType
 from py2py import overlay
 import replika
 from test import testutils
@@ -20,10 +21,17 @@ class TestPeer:
         self.peer = replika.Peer("ring0", self.overlay_peer_mock,
                                  self.incoming_messages)
         self.receieved_files = []
+        self.receieved_messages = []
         self.overlay_peer_mock.sendfile.side_effect = \
             lambda file, metadata: self.receieved_files.append((file, metadata))
         self.overlay_peer_mock.recvfile.side_effect = \
             lambda: cfr(self.receieved_files.pop(-1))
+
+        self.overlay_peer_mock.sendmessage.side_effect = \
+            lambda message: self.receieved_messages.append(message)
+        self.overlay_peer_mock.recvmessage.side_effect = \
+            lambda: cfr(self.receieved_messages.pop(-1))
+
         self.overlay_peer_mock.id = "2"
         self.open_patcher = mock.patch('replika.open',
                                        mock.Mock(spec=open), create=True)
@@ -53,3 +61,15 @@ class TestPeer:
         assert sync_point == "sync_point"
         assert path == "path"
         assert file_time == self.file_time
+
+    def test_transfer_event(self):
+        evt = EventType.create(EventType.FETCH, "sync_point", "source_path")
+        self.peer.sendevent(evt)
+        self.loop.run_until_complete(self.peer._recvevent())
+
+        message_type, remote_peer_id, deserialized_evt = \
+            self.incoming_messages.get_nowait()
+        assert message_type == replika.Peer.MessageReceivedType.EVENT
+        assert evt.type == deserialized_evt.type
+        assert evt.sync_point == deserialized_evt.sync_point
+        assert evt.source_path == deserialized_evt.source_path

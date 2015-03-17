@@ -20,7 +20,7 @@ from os import makedirs
 
 class Peer:
     class MessageReceivedType:
-        MESSAGE = 0
+        EVENT = 0
         FILE = 1
 
     def __init__(self, ring, overlay_peer, incoming_messages):
@@ -29,11 +29,12 @@ class Peer:
         self.overlay_peer = overlay_peer
 
     @asyncio.coroutine
-    def _recvmessage(self):
+    def _recvevent(self):
         message = yield from self.overlay_peer.recvmessage()
+        evt = EventType.deserialize(message)
         self.incoming_messages.put(
-            (self.MessageReceivedType.MESSAGE, self.ident, message))
-        asyncio.async(self._recvmessage())
+            (self.MessageReceivedType.EVENT, self.ident, evt))
+        asyncio.async(self._recvevent())
 
     def __repr__(self):
         return "%s(%s)" % (self.__class__.__name__, self.ident)
@@ -42,7 +43,7 @@ class Peer:
     def ident(self):
         return "{}-{}".format(self.ring, self.overlay_peer.id)
 
-    def send_event(self, evt):
+    def sendevent(self, evt):
         msg = EventType.serialize(evt)
         self.overlay_peer.sendmessage(msg)
 
@@ -84,7 +85,7 @@ class Peer:
         return struct.unpack("!" + format, chunk), pos + struct_size
 
     def listen(self):
-        asyncio.async(self._recvmessage())
+        asyncio.async(self._recvevent())
         asyncio.async(self._recvfile())
 
 
@@ -210,10 +211,9 @@ class Client(async.FlightControl, threading.Thread):
             try:
                 received_message_type, peer_id, message = \
                     self.received_messages.get_nowait()
-                if received_message_type == Peer.MessageReceivedType.MESSAGE:
-                    evt = EventType.deserialize(message)
-                    if evt.sync_point in self.sync_points:
-                        self.sync_points[evt.sync_point].on_event(evt, peer_id)
+                if received_message_type == Peer.MessageReceivedType.EVENT:
+                    if message.sync_point in self.sync_points:
+                        self.sync_points[message.sync_point].on_event(message, peer_id)
                     else:
                         self.logger.warn(
                             "Received unknown sync point from %s: %s", peer_id,
@@ -241,9 +241,9 @@ class Client(async.FlightControl, threading.Thread):
 
     def _send_event(self, evt, recipient=None):
         if recipient is None:
-            [peer.send_event(evt) for peer in list(self.peers.values())]
+            [peer.sendevent(evt) for peer in list(self.peers.values())]
         else:
-            self.peers[recipient].send_event(evt)
+            self.peers[recipient].sendevent(evt)
 
     def _send_file(self, sync_point, path, recipient):
         self.peers[recipient].sendfile(
