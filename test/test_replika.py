@@ -45,7 +45,6 @@ class TestPeer:
         self.peer.sendfile("sync_point", "mount_path", "path")
         file_fut = self.peer._recvfile()
         self.loop.run_until_complete(file_fut)
-        # self.overlay_peer.id, (file, sync_point, path, file_time))
         message_type, remote_peer_id, data = self.incoming_messages.get_nowait()
         assert message_type == replika.Peer.MessageReceivedType.FILE
         assert remote_peer_id == "2"

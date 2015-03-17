@@ -116,8 +116,7 @@ class Overlay(async.FlightControl):
             if peer.id in self.peers:
                 self.unbound_file_clients[peer.id] = peer.file_client
 
-    @async.task
-    def _accept_peer(self, remote_id, client, connection_type):
+    def _create_peer(self, remote_id, client, connection_type):
         if connection_type == self.ConnectionType.PEER:
             is_file_client = False
         elif connection_type == self.ConnectionType.FILE_CLIENT:
@@ -125,7 +124,6 @@ class Overlay(async.FlightControl):
         else:
             raise Exception("Invalid connection type: {}".format(
                 connection_type))
-
         if is_file_client:
             peer = FileClient.from_client(remote_id, client)
             existing_peers = self.file_clients
@@ -134,55 +132,78 @@ class Overlay(async.FlightControl):
             peer = Peer.from_client(remote_id, client)
             existing_peers = self.peers
             reverse_direction_futs = self.reverse_direction_file_client_futs
+        return peer, is_file_client, existing_peers, reverse_direction_futs
+
+    def _bind_reversed_peer(self, existing_peers, fc, is_file_client, peer,
+                            reverse_direction_futs):
+        print(self.id, fc, "received reverse: ", peer.id, "(accept)",
+              peer.reader._transport._sock_fd)
+        existing_peers[peer.id] = peer
+        self._bind_file_client(peer, is_file_client)
+        reverse_direction_futs[peer.id].set_result(peer)
+        del reverse_direction_futs[peer.id]
+
+    def _handle_new_peer(self, peer, is_file_client, fc, reverse_direction_futs,
+                         existing_peers, run_callback):
+        if not peer.is_outgoing:
+            if peer.id > self.id:
+                print(self.id, fc, "received > incoming:", peer.id,
+                      "(accept)", peer.reader._transport._sock_fd)
+                existing_peers[peer.id] = peer
+                self._bind_file_client(peer, is_file_client)
+                resulting_peer = peer
+            else:
+                print(self.id, fc, "received < incoming:", peer.id,
+                      "(close + connect)", peer.reader._transport._sock_fd)
+                self.network.disconnect_client(peer)
+                resulting_peer = yield from self.add_peer(peer.address)
+        else:
+            if self.id > peer.id:
+                print(self.id, fc, "received > outgoing:", peer.id,
+                      "(connect)", peer.reader._transport._sock_fd,
+                      "callback:", run_callback)
+                existing_peers[peer.id] = peer
+                self._bind_file_client(peer, is_file_client)
+                resulting_peer = peer
+            else:
+                print(self.id, fc, "received < outgoing:", peer.id,
+                      "(nothing + yield reverse)",
+                      peer.reader._transport._sock_fd)
+                run_callback = False
+                self.network.disconnect_client(peer)
+                reverse_direction_fut = asyncio.Future()
+                reverse_direction_futs[peer.id] = reverse_direction_fut
+                resulting_peer = yield from reverse_direction_fut
+        return resulting_peer, run_callback
+
+    def _disconnect_existing_peer(self, existing_peers, fc, peer):
+        print(self.id, fc, "existing",
+              "outgoing" if peer.is_outgoing else "incoming",
+              "(close)", peer.reader._transport._sock_fd)
+        self.network.disconnect_client(peer)
+        resulting_peer = existing_peers[peer.id]
+        return resulting_peer
+
+    @async.task
+    def _accept_peer(self, remote_id, client, connection_type):
+        peer, is_file_client, existing_peers, reverse_direction_futs = \
+            self._create_peer(remote_id, client, connection_type)
 
         fc = "fileclient" if is_file_client else "peer"
         run_callback = not is_file_client
         if not peer.is_outgoing and peer.id in reverse_direction_futs and \
                 peer.id not in existing_peers:
-            print(self.id, fc, "received reverse: ", peer.id, "(accept)",
-                  peer.reader._transport._sock_fd)
-            run_callback = False
-            existing_peers[peer.id] = peer
-            self._bind_file_client(peer, is_file_client)
+            self._bind_reversed_peer(existing_peers, fc, is_file_client, peer,
+                                     reverse_direction_futs)
             resulting_peer = peer
-            reverse_direction_futs[peer.id].set_result(peer)
-            del reverse_direction_futs[peer.id]
+            run_callback = False
         elif peer.id not in existing_peers:
-            if not peer.is_outgoing:
-                if peer.id > self.id:
-                    print(self.id, fc, "received > incoming:", peer.id,
-                          "(accept)", peer.reader._transport._sock_fd)
-                    existing_peers[peer.id] = peer
-                    self._bind_file_client(peer, is_file_client)
-                    resulting_peer = peer
-                else:
-                    print(self.id, fc, "received < incoming:", peer.id,
-                          "(close + connect)", peer.reader._transport._sock_fd)
-                    self.network.disconnect_client(peer)
-                    resulting_peer = yield from self.add_peer(peer.address)
-            else:
-                if self.id > peer.id:
-                    print(self.id, fc, "received > outgoing:", peer.id,
-                          "(connect)", peer.reader._transport._sock_fd,
-                          "callback:", run_callback)
-                    existing_peers[peer.id] = peer
-                    self._bind_file_client(peer, is_file_client)
-                    resulting_peer = peer
-                else:
-                    print(self.id, fc, "received < outgoing:", peer.id,
-                          "(nothing + yield reverse)",
-                          peer.reader._transport._sock_fd)
-                    run_callback = False
-                    self.network.disconnect_client(peer)
-                    reverse_direction_fut = asyncio.Future()
-                    reverse_direction_futs[peer.id] = reverse_direction_fut
-                    resulting_peer = yield from reverse_direction_fut
+            resulting_peer, run_callback = yield from self._handle_new_peer(
+                peer, is_file_client, fc, reverse_direction_futs,
+                existing_peers, run_callback)
         else:
-            print(self.id, fc, "existing",
-                  "outgoing" if peer.is_outgoing else "incoming",
-                  "(close)", peer.reader._transport._sock_fd)
-            self.network.disconnect_client(peer)
-            resulting_peer = existing_peers[peer.id]
+            resulting_peer = self._disconnect_existing_peer(existing_peers, fc,
+                                                            peer)
             run_callback = False
         if peer.address in self.flight:
             print(self.id, "connections_in_progress")

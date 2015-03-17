@@ -109,7 +109,8 @@ class TestOverlay:
 
 
     def test_accept_lower_incoming(self):
-        incoming_peer_fut = self.overlay_1._accept_client(self.incoming_client_1)
+        incoming_peer_fut = self.overlay_1._accept_client(
+            self.incoming_client_1)
         self.loop.run_until_no_events()
         incoming_peer, run_callback = incoming_peer_fut.result()
         assert incoming_peer.id == "2"
