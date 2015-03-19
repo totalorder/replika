@@ -16,6 +16,7 @@ from sync import SyncPoint
 from util import HierarchyLogger
 from os.path import join as jn, exists, dirname
 from os import makedirs
+import scan
 
 
 class Peer:
@@ -27,6 +28,7 @@ class Peer:
         self.ring = ring
         self.incoming_messages = incoming_messages
         self.overlay_peer = overlay_peer
+        self.address = overlay_peer.address
 
     @asyncio.coroutine
     def _recvevent(self):
@@ -102,6 +104,9 @@ class Client(async.FlightControl, threading.Thread):
         self.logger = HierarchyLogger(lambda: "Client %s" % self.id)
         self.overlay = overlay.Overlay(self.id, 5000 + int(self.id),
                                        net.Network(), self.accept_peer)
+
+        self.scanned_paths = queue.Queue()
+        self.scanner = scan.Scanner(self.id, self.scanned_paths)
         self.received_messages = queue.Queue()
         self.peers_to_add = queue.Queue()
         self.loop = None
@@ -151,6 +156,7 @@ class Client(async.FlightControl, threading.Thread):
             listen_fut = self.overlay.listen()
             self.loop.run_until_complete(listen_fut)
             self.observer.start()
+            self.scanner.start()
 
             self.loop.call_soon(self._process_messages)
 
@@ -207,7 +213,20 @@ class Client(async.FlightControl, threading.Thread):
             except queue.Empty:
                 break
 
-        while 1:
+
+        n = 0
+        while n < 100:
+            n += 1
+            try:
+                sync_points, path, is_dir, mtime, size, is_deleted = self.scanned_paths.get_nowait()
+                for sync_point in sync_points:
+                    self.sync_points[sync_point].file_scanned(path, is_dir, mtime, size, is_deleted)
+            except queue.Empty:
+                break
+
+        n = 0
+        while n < 100:
+            n += 1
             try:
                 received_message_type, peer_id, message = \
                     self.received_messages.get_nowait()
@@ -223,6 +242,7 @@ class Client(async.FlightControl, threading.Thread):
                     self._receive_file(file, sync_point, path, file_time)
             except queue.Empty:
                 break
+
         self.loop.call_at(self.loop.time() + 0.1, self._process_messages)
 
     def _receive_file(self, file, sync_point, file_path, file_modified_date):
@@ -262,7 +282,7 @@ class Client(async.FlightControl, threading.Thread):
                 raise Exception("SyncPoint already exists")
         else:
             sync_point = SyncPoint(id, mount_path, self._send_event,
-                                   self._send_file, self.logger)
+                                   self._send_file, self.scanner, self.logger)
             self.sync_points[sync_point.id] = sync_point
             sync_point.start(self.observer)
             return self.sync_points[sync_point.id]

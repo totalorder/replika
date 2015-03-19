@@ -1,6 +1,6 @@
 # encoding: utf-8
 from collections import defaultdict
-from os import remove, rmdir, makedirs
+from os import remove, rmdir, makedirs, sep
 from os.path import exists, join as jn, isdir
 import shutil
 from filesystem import ReplikaFileSystemEventHandler, get_file_hash
@@ -9,7 +9,7 @@ from util import HierarchyLogger
 
 
 class SyncPoint(object):
-    def __init__(self, id, mount_path, send_event, send_file, logger):
+    def __init__(self, id, mount_path, send_event, send_file, scanner, logger):
         self.id = id
         self.mount_path = mount_path
         self.started = False
@@ -20,7 +20,12 @@ class SyncPoint(object):
         self.remote_handler = RemoteEventHandler(mount_path, self.send_event,
                                                  self._send_file, self.signal,
                                                  logger)
+        self.mount_path_len = len(self.mount_path)
         self.outstanding_events = defaultdict(list)
+        scanner.add_path(self.id, self.mount_path)
+
+    def relpath(self, path):
+        return path[self.mount_path_len:].strip(sep)
 
     def signal(self, source_path, event_type):
         self.logger.info("Received signal: %s - %s", source_path, event_type)
@@ -36,6 +41,28 @@ class SyncPoint(object):
             self.outstanding_events[evt.source_path].remove(evt.type)
         else:
             self.send_event(evt)
+
+    def file_scanned(self, path, is_dir, mtime, size, is_deleted):
+        if is_deleted:
+            self.send_event(EventType.create(
+                EventType.DELETE,
+                self.id,
+                source_path=self.relpath(path),
+                is_directory=is_dir))
+        elif is_dir:
+            self.send_event(EventType.create(
+                EventType.CREATE,
+                self.id,
+                source_path=self.relpath(path),
+                is_directory=True))
+        else:
+            self.send_event(EventType.create(
+                EventType.MODIFY,
+                self.id,
+                source_path=self.relpath(path),
+                size=size,
+                hash=get_file_hash(path),
+                modified_date=mtime))
 
     def start(self, observer):
         if self.started:
