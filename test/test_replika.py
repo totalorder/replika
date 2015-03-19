@@ -18,6 +18,7 @@ class TestPeer:
 
         self.incoming_messages = queue.Queue()
         self.overlay_peer_mock = mock.Mock(spec=overlay.Peer)
+        self.overlay_peer_mock.address = ("127.0.0.1", 5000)
         self.peer = replika.Peer("ring0", self.overlay_peer_mock,
                                  self.incoming_messages)
         self.receieved_files = []
