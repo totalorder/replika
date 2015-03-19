@@ -89,3 +89,22 @@ class TestScan:
                          "is_dir": True}
                     )
 
+    def test_step_queues_deletes(self):
+        self.scanner.scans_finished = [mock.Mock()]
+        self.scanner.db.keys.return_value = [jn("some", "file.txt")]
+        self.scanner.step()
+        assert self.scanner.scans_finished == []
+        assert self.scanner.deletes_to_check == [jn("some", "file.txt")]
+
+    def test_step_deletes_queued_deletes(self):
+        self.scanner.deletes_to_check = [jn("some", "file.txt")]
+        sync_point = "sync_point"
+        mtime = time.time()
+        self.scanner.db.get.return_value = {"sync_points": [sync_point],
+                                            "size": 100,
+                                            "mtime": mtime,
+                                            "is_dir": False}
+        self.scanner.step()
+        assert self.output_queue.qsize() == 1
+        assert self.output_queue.get_nowait() == \
+            ([sync_point], jn("some", "file.txt"), False, mtime, 100, True)
