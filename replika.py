@@ -247,6 +247,7 @@ class Client(async.FlightControl, threading.Thread):
 
     def _receive_file(self, file, sync_point, file_path, file_modified_date):
         full_path = file.name
+        file.close()
         target_path = jn(self._get_sync_point_info()[sync_point], file_path)
         target_dir = dirname(full_path)
         if not exists(target_dir):
@@ -258,6 +259,7 @@ class Client(async.FlightControl, threading.Thread):
         else:
             self._signal(sync_point, file_path, EventType.MODIFY)
         shutil.copy2(full_path, target_path)
+        os.remove(full_path)
 
     def _send_event(self, evt, recipient=None):
         if recipient is None:

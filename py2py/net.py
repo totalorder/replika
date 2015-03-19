@@ -41,7 +41,7 @@ class Client(object):
     @async.task
     def recvfile(self):
         metadata = yield from self.recvmessage()
-        f = tempfile.NamedTemporaryFile()
+        f = tempfile.NamedTemporaryFile(delete=False)
         file_size = (yield from self.recvdata("I"))[0]
         while file_size > 0:
             data = yield from self.reader.read(min(65536, file_size))
