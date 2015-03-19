@@ -8,7 +8,7 @@ from event import EventType
 from py2py import overlay
 import replika
 from test import testutils
-from test.testutils import create_future_result as cfr
+from test.testutils import create_future_result as cfr, get_future_result as gfr
 
 
 class TestPeer:
@@ -74,3 +74,75 @@ class TestPeer:
         assert evt.type == deserialized_evt.type
         assert evt.sync_point == deserialized_evt.sync_point
         assert evt.source_path == deserialized_evt.source_path
+
+
+class TestClient:
+    def setup_method(self, method):
+        self.loop = testutils.TestLoop()
+        asyncio.set_event_loop(self.loop)
+
+        self.observer_factory_mock = mock.Mock()
+        self.overlay_factory_mock = mock.Mock()
+        self.client = replika.Client("1", "ring-0", loop=self.loop,
+            observer_factory=self.observer_factory_mock,
+            overlay_factory=self.overlay_factory_mock)
+        self.overlay_peer_mock = mock.Mock(spec=overlay.Peer)
+        self.overlay_peer_mock.id = "1"
+        self.overlay_peer_mock.address = ("127.0.0.1", 5000)
+        self.overlay_peer_mock.recvstring.return_value = cfr("ring-1")
+
+    def teardown_method(self, method):
+        self.loop.close()
+
+    def test_accept_peer_ignores_existing(self):
+        existing_peer_mock = mock.Mock()
+        existing_peer_mock.overlay_peer = self.overlay_peer_mock
+        self.client.peers["1-ring-1"] = existing_peer_mock
+
+        peer_fut = self.client.accept_peer(self.overlay_peer_mock)
+        assert gfr(peer_fut) == existing_peer_mock
+
+    def test_accept_peer_outgoing_is_accepted(self):
+        self.overlay_peer_mock.is_outgoing = True
+
+        peer_fut = self.client.accept_peer(self.overlay_peer_mock)
+        self.loop.run_until_complete(peer_fut)
+        peer = peer_fut.result()
+        assert peer.address == self.overlay_peer_mock.address
+
+    def test_accept_peer_incoming_is_accepted(self):
+        self.overlay_peer_mock.is_outgoing = False
+
+        peer_fut = self.client.accept_peer(self.overlay_peer_mock)
+        self.loop.run_until_complete(peer_fut)
+        peer = peer_fut.result()
+        assert peer.address == self.overlay_peer_mock.address
+
+    def test_accept_peer_in_flight(self):
+        self.overlay_peer_mock.is_outgoing = True
+        flight_future = asyncio.futures.Future()
+        self.client.flight[self.overlay_peer_mock] = flight_future
+        peer_mock = mock.Mock()
+        flight_future.set_result(peer_mock)
+
+        peer_fut = self.client.accept_peer(self.overlay_peer_mock)
+        self.loop.run_until_complete(peer_fut)
+        peer = peer_fut.result()
+        assert peer == peer_mock
+
+    def test_add_peer_ignores_existing(self):
+        existing_peer_mock = mock.Mock()
+        existing_peer_mock.address = self.overlay_peer_mock.address
+        self.client.peers["1-ring-1"] = existing_peer_mock
+
+        peer_fut = self.client._add_peer(self.overlay_peer_mock.address)
+
+        self.loop.run_until_complete(peer_fut)
+        assert peer_fut.result() == existing_peer_mock
+
+    def test_add_peer(self):
+        self.client.overlay.add_peer = lambda _: cfr(self.overlay_peer_mock)
+        peer_mock = mock.Mock()
+        self.client.accept_peer = lambda _: cfr(peer_mock)
+        peer_fut = self.client._add_peer(("127.0.0.1", 5000))
+        assert gfr(peer_fut) == peer_mock

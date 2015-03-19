@@ -92,17 +92,18 @@ class Peer:
 
 
 class Client(async.FlightControl, threading.Thread):
-    def __init__(self, id, ring, loop=None):
+    def __init__(self, id, ring, loop=None, observer_factory=Observer,
+                 overlay_factory=overlay.Overlay):
         super().__init__()
         self.setDaemon(True)
         self.id = id
         self.ring = ring
         self.peers = {}
         self.sync_points = {}
-        self.observer = Observer()
+        self.observer = observer_factory
         self.running = False
         self.logger = HierarchyLogger(lambda: "Client %s" % self.id)
-        self.overlay = overlay.Overlay(self.id, 5000 + int(self.id),
+        self.overlay = overlay_factory(self.id, 5000 + int(self.id),
                                        net.Network(), self.accept_peer)
 
         self.scanned_paths = queue.Queue()
@@ -189,11 +190,7 @@ class Client(async.FlightControl, threading.Thread):
 
         overlay_peer = yield from self.overlay.add_peer(address)
         print(self.id, "_add_peer")
-        try:
-            peer = yield from self.accept_peer(overlay_peer)
-        except RuntimeError:
-            print(self.id, "dead :(")
-            raise
+        peer = yield from self.accept_peer(overlay_peer)
         return peer
 
     def _get_sync_point_info(self):
